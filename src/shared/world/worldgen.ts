@@ -1,4 +1,4 @@
-import { FOREST, STONES, WORLD } from '../balance';
+import { FOREST, STONES, WINE, WORLD } from '../balance';
 import { ValueNoise, lerp, mulberry32, smoothstep, toSeed } from '../rng';
 import { hutLayout, stallLayout, type BoxCollider, type HutLayout, type StallLayout } from './buildings';
 import { ObstacleGrid, type Obstacle } from './grid';
@@ -35,6 +35,8 @@ export interface WorldData {
   appleTrees: PropInstance[];
   /** Мелкие камешки: подбираются руками. */
   pebbles: PropInstance[];
+  /** Дикие лозы: с них начинается виноделие. */
+  vines: PropInstance[];
   monument: { x: number; z: number; y: number; rot: number };
   hut: HutLayout;
   stall: StallLayout;
@@ -72,19 +74,22 @@ function treeDensity(x: number, z: number, glades: ValueNoise): number {
   return Math.min(base * variation, FOREST.thicketDensity);
 }
 
-/** Яблони раскиданы по лесу; вокруг каждой — прогалина, чтобы её было видно. */
-function placeAppleTrees(seed: number, terrain: Terrain): PropInstance[] {
-  const rng = mulberry32(seed ^ 0x7a1c93d5);
+/**
+ * Раскидывает по лесу редкие приметные штуки (яблони, лозы) так, чтобы вокруг
+ * каждой оставалась прогалина и они не липли друг к другу.
+ */
+function placeLandmarks(seed: number, terrain: Terrain, count: number, minGap: number): PropInstance[] {
+  const rng = mulberry32(seed);
   const out: PropInstance[] = [];
-  let guard = FOREST.appleTrees * 400;
-  while (out.length < FOREST.appleTrees && guard-- > 0) {
+  let guard = count * 400;
+  while (out.length < count && guard-- > 0) {
     const x = (rng() * 2 - 1) * 165;
     const z = (rng() * 2 - 1) * 165;
     if (Terrain.lakeDistance(x, z) < WORLD.lakeHalf + 14) continue;
     if (distToClearing(x, z) < WORLD.clearing.r + 8) continue;
     if (terrain.surface(x, z) !== 'grass') continue;
     if (terrain.slope(x, z) > 0.35) continue;
-    if (out.some((a) => Math.hypot(a.x - x, a.z - z) < 45)) continue;
+    if (out.some((a) => Math.hypot(a.x - x, a.z - z) < minGap)) continue;
     out.push({
       x,
       z,
@@ -101,7 +106,8 @@ export function generateWorld(seedInput: string | number): WorldData {
   const seed = toSeed(seedInput);
   const terrain = new Terrain(seed);
   const glades = new ValueNoise(seed ^ 0x51ed270b);
-  const appleTrees = placeAppleTrees(seed, terrain);
+  const appleTrees = placeLandmarks(seed ^ 0x7a1c93d5, terrain, FOREST.appleTrees, 45);
+  const vines = placeLandmarks(seed ^ 0x3f77a1b9, terrain, WINE.wildVines, 40);
 
   const trees: TreeInstance[] = [];
   const treeObstacles: Obstacle[] = [];
@@ -121,6 +127,7 @@ export function generateWorld(seedInput: string | number): WorldData {
       if (terrain.slope(x, z) > 0.5) continue;
       // Вокруг яблони держим прогалину, иначе её не разглядеть в чаще.
       if (appleTrees.some((a) => Math.hypot(a.x - x, a.z - z) < 6)) continue;
+      if (vines.some((v) => Math.hypot(v.x - x, v.z - z) < 5)) continue;
 
       const r = rng();
       const type = r < 0.5 ? TreeType.Spruce : r < 0.82 ? TreeType.Pine : TreeType.Birch;
@@ -167,6 +174,9 @@ export function generateWorld(seedInput: string | number): WorldData {
   for (const a of appleTrees) {
     obstacles.add({ x: a.x, z: a.z, radius: 0.42 * a.scale, id: -1 });
   }
+  for (const v of vines) {
+    obstacles.add({ x: v.x, z: v.z, radius: 0.5, id: -1 });
+  }
   obstacles.add({ x: WORLD.monument.x, z: WORLD.monument.z, radius: 0.7, id: -1 });
 
   const hut = hutLayout(terrain);
@@ -181,6 +191,7 @@ export function generateWorld(seedInput: string | number): WorldData {
     grass: scatter(FOREST.grassTufts, false, 1.5),
     pebbles: scatter(STONES.pebbles, true, 0.5),
     appleTrees,
+    vines,
     monument: {
       x: WORLD.monument.x,
       z: WORLD.monument.z,

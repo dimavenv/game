@@ -5,7 +5,7 @@ import type { Terrain } from './terrain';
 import { Terrain as TerrainClass } from './terrain';
 import type { WorldData } from './worldgen';
 
-export type BlueprintId = 'press' | 'cellar' | 'palisade' | 'gate' | 'chest' | 'pier' | 'smokehouse';
+export type BlueprintId = 'press' | 'cellar' | 'palisade' | 'gate' | 'chest' | 'pier' | 'smokehouse' | 'vine';
 
 export interface Blueprint {
   name: string;
@@ -13,6 +13,8 @@ export interface Blueprint {
   /** Из чего строится. */
   logs: number;
   stones: number;
+  /** Саженцы — для лозы. */
+  saplings?: number;
   /** Габариты основания в метрах (полуразмеры). */
   hw: number;
   hd: number;
@@ -24,6 +26,17 @@ export interface Blueprint {
 }
 
 export const BLUEPRINTS: Record<BlueprintId, Blueprint> = {
+  vine: {
+    name: 'Лоза',
+    hint: 'Посаженная лоза начинает плодоносить через двое суток',
+    logs: 0,
+    stones: 0,
+    saplings: 1,
+    hw: 0.8,
+    hd: 0.5,
+    height: 1.8,
+    solid: false,
+  },
   press: {
     name: 'Давильня',
     hint: 'Топчешь виноград, получается сок',
@@ -111,6 +124,8 @@ export interface PlacedStructure {
   juice?: number;
   /** Погреб: партии вина и день, когда их залили. */
   barrels?: { amount: number; startedDay: number }[];
+  /** Лоза: день последнего сбора. */
+  pickedDay?: number | null;
 }
 
 export const CHEST_SLOTS = 24;

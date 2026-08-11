@@ -8,6 +8,8 @@ export type ItemId =
   | 'log'
   | 'grape'
   | 'bottle_empty'
+  | 'must'
+  | 'vine_sapling'
   | 'wine_young'
   | 'wine_aged'
   | 'wine_vintage'
@@ -37,6 +39,8 @@ export const ITEMS: Record<ItemId, ItemSpec> = {
   log: { name: 'бревно', weight: 3, stack: 20, sell: 12, icon: '🪵' },
   grape: { name: 'гроздь', weight: 0.4, stack: 30, sell: 10, icon: '🍇' },
   bottle_empty: { name: 'пустая бутылка', weight: 0.5, stack: 12, sell: 3, icon: '🫙' },
+  must: { name: 'сусло', weight: 1.1, stack: 10, sell: 25, icon: '🧃' },
+  vine_sapling: { name: 'саженец винограда', weight: 0.8, stack: 6, sell: 25, icon: '🌱' },
   wine_young: { name: 'молодое вино', weight: 1.2, stack: 8, sell: 60, icon: '🍷' },
   wine_aged: { name: 'выдержанное вино', weight: 1.2, stack: 8, sell: 120, icon: '🍷' },
   wine_vintage: { name: 'коллекционное вино', weight: 1.2, stack: 8, sell: 220, icon: '🍾' },

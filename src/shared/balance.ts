@@ -239,3 +239,26 @@ export const HEALTH = {
   stoveRegen: 2.5,
   deathFade: 2.2,
 } as const;
+
+/** Виноград и виноделие (этап 5). */
+export const WINE = {
+  wildVines: 12,
+  /** Сколько гроздей даёт одна лоза. */
+  minBunches: 3,
+  maxBunches: 6,
+  /** Через сколько суток на лозе снова висят грозди. */
+  vineRegrowDays: 2,
+  /** Посаженная лоза начинает плодоносить не сразу. */
+  saplingGrowDays: 2,
+  /** Сколько гроздей уходит в одно сусло и сколько времени топчешь. */
+  grapesPerMust: 4,
+  pressTime: 2.2,
+  /** Бочка: сколько сусла в неё влезает и сколько бутылок выходит. */
+  mustPerBarrel: 5,
+  bottlesPerBarrel: 5,
+  /** Выдержка в игровых сутках. */
+  ageYoung: 1,
+  ageAged: 3,
+  ageVintage: 7,
+  range: 3.0,
+} as const;

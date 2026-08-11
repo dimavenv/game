@@ -1,7 +1,7 @@
 import { countItem, type Inventory } from '../../shared/inventory';
 import { BLUEPRINTS, type BlueprintId } from '../../shared/world/building';
 
-const ORDER: BlueprintId[] = ['palisade', 'gate', 'chest', 'press', 'cellar', 'smokehouse', 'pier'];
+const ORDER: BlueprintId[] = ['palisade', 'gate', 'chest', 'vine', 'press', 'cellar', 'smokehouse', 'pier'];
 
 /** Полоска заготовок внизу экрана: что строим и хватает ли материалов. */
 export class BuildMenu {
@@ -45,7 +45,11 @@ export class BuildMenu {
 
   affordable(inv: Inventory, kind: BlueprintId = this.selected): boolean {
     const blueprint = BLUEPRINTS[kind];
-    return countItem(inv, 'log') >= blueprint.logs && countItem(inv, 'stone') >= blueprint.stones;
+    return (
+      countItem(inv, 'log') >= blueprint.logs &&
+      countItem(inv, 'stone') >= blueprint.stones &&
+      countItem(inv, 'vine_sapling') >= (blueprint.saplings ?? 0)
+    );
   }
 
   render(inv: Inventory): void {
@@ -65,6 +69,7 @@ export class BuildMenu {
       const parts: string[] = [];
       if (blueprint.logs > 0) parts.push(`брёвна ${blueprint.logs}`);
       if (blueprint.stones > 0) parts.push(`камни ${blueprint.stones}`);
+      if (blueprint.saplings) parts.push(`саженцы ${blueprint.saplings}`);
       cost.textContent = parts.join(' · ');
 
       button.append(title, cost);

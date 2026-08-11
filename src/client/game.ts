@@ -4,6 +4,7 @@ import {
   CHOP,
   ECONOMY,
   STONES,
+  WINE,
   FISHING,
   HEALTH,
   INTERACT,
@@ -16,6 +17,7 @@ import {
   WORLD_SEED,
 } from '../shared/balance';
 import { fishItemId, fishLabel, rollFish } from '../shared/fishing';
+import { GRADE_LABEL, daysToNextGrade, wineGrade, wineItem } from '../shared/wine';
 import {
   BLUEPRINTS,
   CHEST_SLOTS,
@@ -28,7 +30,14 @@ import { addItem, countItem, isOverloaded, removeItem } from '../shared/inventor
 import { createPlayerState, stepPlayer, type PlayerState } from '../shared/movement';
 import { questProgress } from '../shared/quests';
 import { clamp, mulberry32, smoothstep } from '../shared/rng';
-import { applesReady, createGameState, isBlessed, type GameState } from '../shared/state';
+import {
+  applesReady,
+  createGameState,
+  isBlessed,
+  plantedVineReady,
+  vineReady,
+  type GameState,
+} from '../shared/state';
 import { advanceClock, createClock, isDark } from '../shared/time';
 import {
   damageZombie,
@@ -56,6 +65,7 @@ import { createNpc, type NpcHandle } from './render/characters';
 import { Forest, TREE_HEIGHT } from './render/forest';
 import { buildAppleTree, buildMonument, ChopEffects, type AppleTreeHandle } from './render/nature';
 import { PlacedStructures } from './render/placed';
+import { buildVine, buildWildVine, type VineHandle } from './render/vines';
 import { Sky } from './render/sky';
 import { Smoke } from './render/smoke';
 import { buildSign } from './render/sign';
@@ -120,6 +130,9 @@ export class Game {
   private buildKind: BlueprintId = 'palisade';
   private buildMode = false;
   private readonly rockPoints: THREE.Vector3[] = [];
+  private readonly wildVines: VineHandle[] = [];
+  private readonly plantedVines = new Map<number, VineHandle>();
+  private pressing = 0;
   private readonly zombieView = new ZombieView(40);
   private zombies: Zombie[] = [];
   private nextZombieId = 0;
@@ -195,6 +208,12 @@ export class Game {
       this.scene.add(tree.group);
     }
 
+    for (const prop of this.world.vines) {
+      const vine = buildWildVine(prop);
+      this.wildVines.push(vine);
+      this.scene.add(vine.group);
+    }
+
     const monument = buildMonument(
       this.world.monument.x,
       this.world.monument.y,
@@ -248,6 +267,7 @@ export class Game {
       chair: new THREE.Vector3(seat.x, this.world.hut.floorY, seat.z),
       appleTrees: this.appleTrees.map((t) => t.position),
       pebbles: this.world.pebbles.map((p) => new THREE.Vector3(p.x, p.y, p.z)),
+      vines: this.wildVines.map((v) => v.position),
     });
 
     this.input = new Input(canvas);
@@ -614,8 +634,11 @@ export class Game {
       case 'pebble':
         this.pickPebble(target.index);
         break;
+      case 'vine':
+        this.pickWildGrapes(target.index);
+        break;
       case 'structure':
-        this.openChest(target.index);
+        this.useStructure(target.index);
         break;
       case 'chair':
         this.seated = true;
@@ -768,7 +791,9 @@ export class Game {
     this.sky.update(this.clock.t, this.camera);
     this.forest.update(dt);
     this.placed.sync(this.state.world.structures);
+    this.syncVines();
     this.updateGhost();
+    if (this.pressing > 0) this.pressing = Math.max(0, this.pressing - dt);
     this.chopEffects.update(dt);
     this.npcs.buravchik.update(dt);
     this.npcs.tomer.update(dt);
@@ -1164,6 +1189,7 @@ export class Game {
 
     removeItem(inv, 'log', blueprint.logs);
     removeItem(inv, 'stone', blueprint.stones);
+    if (blueprint.saplings) removeItem(inv, 'vine_sapling', blueprint.saplings);
 
     const structure: PlacedStructure = {
       id: this.state.world.nextStructureId++,
@@ -1177,6 +1203,7 @@ export class Game {
     if (this.buildKind === 'chest') structure.storage = Array.from({ length: CHEST_SLOTS }, () => null);
     if (this.buildKind === 'cellar') structure.barrels = [];
     if (this.buildKind === 'press') structure.juice = 0;
+    if (this.buildKind === 'vine') structure.pickedDay = null;
     this.state.world.structures.push(structure);
     this.registerStructureCollider(structure);
 
@@ -1188,6 +1215,173 @@ export class Game {
   private registerStructureCollider(structure: PlacedStructure): void {
     const collider = structureCollider(structure);
     if (collider) this.world.boxes.push(collider);
+  }
+
+
+  private grapesFromVine(): number {
+    return WINE.minBunches + Math.floor(this.rng() * (WINE.maxBunches - WINE.minBunches + 1));
+  }
+
+  private pickWildGrapes(index: number): void {
+    if (!vineReady(this.state, index, this.clock.day, WINE.vineRegrowDays)) return;
+    const count = this.grapesFromVine();
+    const left = addItem(this.state.inventory, 'grape', count);
+    if (left >= count) {
+      this.toasts.push('В рюкзаке нет места', 'bad');
+      return;
+    }
+    this.state.world.vines.set(index, this.clock.day);
+    this.wildVines[index]?.setGrapes(false);
+    this.audio.pickup();
+    this.toasts.push(`Грозди: +${count - left}`);
+  }
+
+  /** Постройки под E: сундук, давильня, погреб и своя лоза. */
+  private useStructure(id: number): void {
+    const structure = Interactions.structureById(this.state, id);
+    if (!structure) return;
+    switch (structure.kind) {
+      case 'chest':
+        this.openChest(id);
+        break;
+      case 'press':
+        this.treadGrapes(structure);
+        break;
+      case 'cellar':
+        this.openCellar(structure);
+        break;
+      case 'vine':
+        this.pickPlantedGrapes(structure);
+        break;
+      default:
+        break;
+    }
+  }
+
+  private pickPlantedGrapes(structure: PlacedStructure): void {
+    if (!plantedVineReady(structure, this.clock.day, WINE.saplingGrowDays, WINE.vineRegrowDays)) {
+      this.toasts.push('Лоза ещё не поспела', 'bad');
+      return;
+    }
+    const count = this.grapesFromVine() + 1;
+    const left = addItem(this.state.inventory, 'grape', count);
+    if (left >= count) {
+      this.toasts.push('В рюкзаке нет места', 'bad');
+      return;
+    }
+    structure.pickedDay = this.clock.day;
+    this.plantedVines.get(structure.id)?.setGrapes(false);
+    this.audio.pickup();
+    this.toasts.push(`Грозди: +${count - left}`);
+  }
+
+  /** Топчем виноград: за раз уходит несколько гроздей и выходит сусло. */
+  private treadGrapes(structure: PlacedStructure): void {
+    if (this.pressing > 0) return;
+    const inv = this.state.inventory;
+    if (countItem(inv, 'grape') < WINE.grapesPerMust) {
+      this.toasts.push(`Нужно ${WINE.grapesPerMust} гроздей`, 'bad');
+      return;
+    }
+    removeItem(inv, 'grape', WINE.grapesPerMust);
+    this.pressing = WINE.pressTime;
+    structure.juice = (structure.juice ?? 0) + 1;
+    window.setTimeout(() => {
+      if (addItem(inv, 'must', 1) > 0) this.toasts.push('Сусло некуда налить', 'bad');
+      else this.toasts.push('Сусло: +1');
+      this.audio.splash(0.4);
+    }, WINE.pressTime * 1000);
+  }
+
+  private cellarDialog(structure: PlacedStructure): DialogSpec {
+    const day = this.clock.day;
+    const barrels = structure.barrels ?? [];
+    const inv = this.state.inventory;
+    const actions = [];
+
+    actions.push({
+      id: 'fill',
+      label: `Залить бочку (сусло ${WINE.mustPerBarrel})`,
+      note: `${countItem(inv, 'must')}/${WINE.mustPerBarrel}`,
+      disabled: countItem(inv, 'must') < WINE.mustPerBarrel,
+    });
+
+    barrels.forEach((barrel, index) => {
+      const grade = wineGrade(barrel.startedDay, day);
+      const wait = daysToNextGrade(barrel.startedDay, day);
+      const bottles = countItem(inv, 'bottle_empty');
+      actions.push({
+        id: `bottle-${index}`,
+        label: grade
+          ? `Разлить: ${GRADE_LABEL[grade]} (${barrel.amount} бут.)`
+          : `Бочка бродит, ещё ${wait} сут.`,
+        note: grade ? `нужно бутылок: ${barrel.amount} (есть ${bottles})` : '',
+        disabled: !grade || bottles < barrel.amount,
+      });
+    });
+
+    actions.push({ id: 'leave', label: 'Отойти' });
+
+    const speech = barrels.length
+      ? 'В бочках что-то тихо булькает.'
+      : 'Пустые бочки ждут сусла. Виноград сам себя не оттопчет.';
+    return { title: 'Винный погреб', speech, actions, footer: `Бочек занято: ${barrels.length}` };
+  }
+
+  private openCellar(structure: PlacedStructure): void {
+    const spec = (): DialogSpec => this.cellarDialog(structure);
+    this.openDialog(spec, (id) => {
+      const inv = this.state.inventory;
+      if (id === 'fill') {
+        if (countItem(inv, 'must') < WINE.mustPerBarrel) return false;
+        removeItem(inv, 'must', WINE.mustPerBarrel);
+        structure.barrels = structure.barrels ?? [];
+        structure.barrels.push({ amount: WINE.bottlesPerBarrel, startedDay: this.clock.day });
+        this.toasts.push('Сусло в бочке. Теперь ждать');
+        this.audio.stoke();
+        return false;
+      }
+      if (id.startsWith('bottle-')) {
+        const index = Number(id.slice(7));
+        const barrel = structure.barrels?.[index];
+        if (!barrel) return false;
+        const grade = wineGrade(barrel.startedDay, this.clock.day);
+        if (!grade) return false;
+        if (countItem(inv, 'bottle_empty') < barrel.amount) return false;
+        removeItem(inv, 'bottle_empty', barrel.amount);
+        const left = addItem(inv, wineItem(grade), barrel.amount);
+        structure.barrels!.splice(index, 1);
+        this.toasts.push(`Разлито: ${GRADE_LABEL[grade]} × ${barrel.amount - left}`, 'money');
+        this.audio.coins();
+        return false;
+      }
+      return id === 'leave';
+    });
+  }
+
+  /** Держит в согласии посаженные лозы и их модели. */
+  private syncVines(): void {
+    const day = this.clock.day;
+    const alive = new Set<number>();
+    for (const s of this.state.world.structures) {
+      if (s.kind !== 'vine') continue;
+      alive.add(s.id);
+      let handle = this.plantedVines.get(s.id);
+      if (!handle) {
+        handle = buildVine(s.x, s.y, s.z, s.rot, 0.9);
+        this.scene.add(handle.group);
+        this.plantedVines.set(s.id, handle);
+      }
+      handle.setGrapes(plantedVineReady(s, day, WINE.saplingGrowDays, WINE.vineRegrowDays));
+    }
+    for (const [id, handle] of this.plantedVines) {
+      if (alive.has(id)) continue;
+      this.scene.remove(handle.group);
+      this.plantedVines.delete(id);
+    }
+    this.wildVines.forEach((vine, index) => {
+      vine.setGrapes(vineReady(this.state, index, day, WINE.vineRegrowDays));
+    });
   }
 
   private updateHud(): void {

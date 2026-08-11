@@ -28,6 +28,8 @@ export interface WorldState {
   boulders: Map<number, BoulderState>;
   /** Подобранные камешки: индекс → день, когда подобрали. */
   pebbles: Map<number, number>;
+  /** Дикие лозы: индекс → день, когда с них сняли грозди. */
+  vines: Map<number, number>;
   /** Всё, что игрок построил молотом. */
   structures: PlacedStructure[];
   nextStructureId: number;
@@ -60,6 +62,7 @@ export function createGameState(appleTreeCount: number): GameState {
       appleTrees: Array.from({ length: appleTreeCount }, () => ({ pickedDay: null })),
       boulders: new Map(),
       pebbles: new Map(),
+      vines: new Map(),
       structures: [],
       nextStructureId: 1,
       stoveFuel: 0,
@@ -94,6 +97,25 @@ export function isBoulderBroken(state: GameState, index: number, day: number, re
   const b = state.world.boulders.get(index);
   if (!b || b.brokenDay === null) return false;
   return day - b.brokenDay < regrowDays;
+}
+
+/** Есть ли сейчас грозди на дикой лозе. */
+export function vineReady(state: GameState, index: number, day: number, regrowDays: number): boolean {
+  const picked = state.world.vines.get(index);
+  if (picked === undefined) return true;
+  return day - picked >= regrowDays;
+}
+
+/** Посаженная лоза: сперва подрастает, потом плодоносит каждые сутки. */
+export function plantedVineReady(
+  vine: { builtDay: number; pickedDay?: number | null },
+  day: number,
+  growDays: number,
+  regrowDays: number,
+): boolean {
+  if (day - vine.builtDay < growDays) return false;
+  if (vine.pickedDay === null || vine.pickedDay === undefined) return true;
+  return day - vine.pickedDay >= regrowDays;
 }
 
 export function isPebbleTaken(state: GameState, index: number, day: number, regrowDays: number): boolean {

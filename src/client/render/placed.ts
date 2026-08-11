@@ -105,6 +105,15 @@ function geometryFor(kind: BlueprintId): THREE.BufferGeometry {
         ),
       ]);
 
+    case 'vine':
+      // Лозу рисует отдельный модуль, здесь нужен только призрак.
+      return merge([
+        post(0.07, 1.7, WOOD, -0.7, 0, 0),
+        post(0.07, 1.7, WOOD, 0.7, 0, 0),
+        box(1.6, 0.1, 0.1, WOOD, 0, 1.6, 0),
+        box(1.5, 0.7, 0.7, 0x4f7a35, 0, 1.75, 0),
+      ]);
+
     case 'smokehouse':
       return merge([
         box(1.6, 1.2, 1.6, STONE, 0, 0.6, 0),
@@ -154,6 +163,7 @@ export class PlacedStructures {
   sync(structures: PlacedStructure[]): void {
     const alive = new Set<number>();
     for (const s of structures) {
+      if (s.kind === 'vine') continue;
       alive.add(s.id);
       if (this.meshes.has(s.id)) continue;
       const mesh = new THREE.Mesh(this.geometry(s.kind), this.material);

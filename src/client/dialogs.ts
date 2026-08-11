@@ -114,6 +114,7 @@ const SHOP: ShopEntry[] = [
   { id: 'buy-bandage', label: 'Бинт', price: ECONOMY.prices.bandage, item: { id: 'bandage', count: 1 } },
   { id: 'buy-shells', label: 'Патроны, 5 шт.', price: ECONOMY.prices.shells5, item: { id: 'shells', count: 5 } },
   { id: 'buy-bottles', label: 'Пустые бутылки, 5 шт.', price: ECONOMY.prices.bottles5, item: { id: 'bottle_empty', count: 5 } },
+  { id: 'buy-sapling', label: 'Саженец винограда', price: ECONOMY.prices.vineSapling, item: { id: 'vine_sapling', count: 1 } },
   { id: 'buy-rod', label: 'Удочка', price: ECONOMY.prices.fishingRod, owned: (s) => s.inventory.hasRod, buy: (s) => { s.inventory.hasRod = true; } },
   {
     id: 'buy-flashlight',
@@ -128,7 +129,7 @@ const SHOP: ShopEntry[] = [
 ];
 
 /** Что Томер скупает: ресурсы и улов. */
-const SELLABLE: ItemId[] = ['apple', 'log', 'stone', 'grape', 'wine_young', 'wine_aged', 'wine_vintage'];
+const SELLABLE: ItemId[] = ['apple', 'log', 'stone', 'grape', 'must', 'wine_young', 'wine_aged', 'wine_vintage'];
 
 /** Цена стопки с учётом веса рыбы. */
 function stackValue(id: ItemId, count: number, weight?: number): number {

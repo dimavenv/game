@@ -1,8 +1,16 @@
 import * as THREE from 'three';
-import { APPLES, CHOP, INTERACT, STONES } from '../shared/balance';
-import { BLUEPRINTS, type PlacedStructure } from '../shared/world/building';
+import { APPLES, CHOP, INTERACT, STONES, WINE } from '../shared/balance';
+import type { PlacedStructure } from '../shared/world/building';
 import { countItem } from '../shared/inventory';
-import { applesReady, isBoulderBroken, isPebbleTaken, isTreeDown, type GameState } from '../shared/state';
+import {
+  applesReady,
+  isBoulderBroken,
+  isPebbleTaken,
+  isTreeDown,
+  plantedVineReady,
+  vineReady,
+  type GameState,
+} from '../shared/state';
 import type { PlayerState } from '../shared/movement';
 import type { WorldData } from '../shared/world/worldgen';
 
@@ -14,6 +22,7 @@ export type TargetKind =
   | 'stove'
   | 'chair'
   | 'pebble'
+  | 'vine'
   | 'structure';
 
 export interface Target {
@@ -37,6 +46,7 @@ export interface InteractionPoints {
   chair: THREE.Vector3;
   appleTrees: THREE.Vector3[];
   pebbles: THREE.Vector3[];
+  vines: THREE.Vector3[];
 }
 
 /**
@@ -137,20 +147,38 @@ export class Interactions {
       consider({ kind: 'chair', index: -1, hint: 'E — сесть', distance: chair, priority: 0 });
     }
 
-    // Постройки, с которыми можно что-то делать (пока только сундук).
+    // Постройки, с которыми есть что делать.
     for (const s of state.world.structures) {
-      if (s.kind !== 'chest') continue;
+      const range = s.kind === 'cellar' ? INTERACT.range + 1.4 : INTERACT.range;
       const d = Math.hypot(s.x - player.x, s.z - player.z);
-      if (d > INTERACT.range) continue;
+      if (d > range) continue;
       if (this.facing(player, s.x, s.z) < 0.2) continue;
+
+      let hint: string | null = null;
+      if (s.kind === 'chest') hint = 'E — сундук';
+      else if (s.kind === 'press') hint = 'E — топтать виноград';
+      else if (s.kind === 'cellar') hint = 'E — погреб';
+      else if (s.kind === 'vine') {
+        hint = plantedVineReady(s, day, WINE.saplingGrowDays, WINE.vineRegrowDays)
+          ? 'E — срезать грозди'
+          : 'лоза ещё не поспела';
+      }
+      if (!hint) continue;
+      consider({ kind: 'structure', index: s.id, hint, distance: d, priority: 2 });
+    }
+
+    this.points.vines.forEach((p, index) => {
+      const d = near(p, WINE.range, 0.2);
+      if (d === null) return;
+      const ready = vineReady(state, index, day, WINE.vineRegrowDays);
       consider({
-        kind: 'structure',
-        index: s.id,
-        hint: `E — ${BLUEPRINTS[s.kind].name.toLowerCase()}`,
+        kind: 'vine',
+        index,
+        hint: ready ? 'E — срезать грозди' : 'грозди уже срезаны',
         distance: d,
         priority: 2,
       });
-    }
+    });
 
     this.points.pebbles.forEach((p, index) => {
       if (isPebbleTaken(state, index, day, STONES.pebbleRegrowDays)) return;
