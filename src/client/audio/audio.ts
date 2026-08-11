@@ -6,6 +6,23 @@ import { SoundSlots } from './slots';
  * Ветер, листва и вода — отфильтрованный шум, сверчки и щелчки — короткие
  * огибающие. Записанная озвучка НПС подключится сюда же на этапе 3.
  */
+
+/**
+ * Уровни фонового шума. Фон должен быть слышен, но не мешать: шаги, поклёвка
+ * и стоны из чащи важнее ветра, поэтому ветер держим заметно тише остального.
+ */
+const MIX = {
+  /** Ветер: постоянный уровень, добавка от силы ветра и размах порывов. */
+  windBase: 0.03,
+  windRange: 0.07,
+  windGust: 0.045,
+  /** Шелест листвы: тем громче, чем гуще крона над головой. */
+  leavesBase: 0.015,
+  leavesRange: 0.055,
+  /** Плеск озера у берега. */
+  water: 0.12,
+} as const;
+
 export class GameAudio {
   private ctx: AudioContext | null = null;
   private master!: GainNode;
@@ -53,10 +70,12 @@ export class GameAudio {
     this.waterGain = this.loopLayer('bandpass', 340, 1.4, 0.0);
 
     // Медленные порывы: низкочастотный осциллятор гуляет по громкости ветра.
+    // Размах небольшой — он складывается с базовым уровнем, и на прежних 0.35
+    // порыв перекрывал собой всё остальное.
     const lfo = ctx.createOscillator();
     lfo.frequency.value = 0.07;
     const lfoGain = ctx.createGain();
-    lfoGain.gain.value = 0.35;
+    lfoGain.gain.value = MIX.windGust;
     lfo.connect(lfoGain).connect(this.windGain.gain);
     lfo.start();
 
@@ -360,9 +379,9 @@ export class GameAudio {
   ): void {
     if (!this.ctx) return;
     const t = this.ctx.currentTime;
-    this.windGain.gain.setTargetAtTime(0.1 + info.windTarget * 0.22, t, 0.8);
-    this.leavesGain.gain.setTargetAtTime(0.02 + info.canopy * 0.09, t, 0.8);
-    this.waterGain.gain.setTargetAtTime(info.waterCloseness * 0.16, t, 0.5);
+    this.windGain.gain.setTargetAtTime(MIX.windBase + info.windTarget * MIX.windRange, t, 0.8);
+    this.leavesGain.gain.setTargetAtTime(MIX.leavesBase + info.canopy * MIX.leavesRange, t, 0.8);
+    this.waterGain.gain.setTargetAtTime(info.waterCloseness * MIX.water, t, 0.5);
 
     if (this.aviVolume > 0.002) {
       this.musicTimer -= dt;
