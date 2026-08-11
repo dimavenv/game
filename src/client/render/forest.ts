@@ -81,6 +81,22 @@ function bushGeometry(): THREE.BufferGeometry {
   ]);
 }
 
+/** Камешек под ногами: маленький и заметно светлее валуна. */
+function pebbleGeometry(): THREE.BufferGeometry {
+  const parts: THREE.BufferGeometry[] = [];
+  for (const [dx, dz, r] of [
+    [0, 0, 0.16],
+    [0.17, 0.08, 0.11],
+    [-0.13, 0.12, 0.09],
+  ]) {
+    const g = new THREE.DodecahedronGeometry(r, 0);
+    g.scale(1, 0.6, 1);
+    g.translate(dx, r * 0.5, dz);
+    parts.push(tint(g, 0x9a968c));
+  }
+  return merge(parts);
+}
+
 function rockGeometry(): THREE.BufferGeometry {
   const g = new THREE.DodecahedronGeometry(0.5, 0);
   g.scale(1, 0.65, 1.1);
@@ -157,6 +173,8 @@ export class Forest {
   private readonly time = { value: 0 };
   /** Соответствие «индекс дерева в мире» → конкретный инстанс, чтобы его прятать. */
   private readonly slots = new Map<number, TreeSlot>();
+  /** Валуны и камешки прячем так же, как срубленные деревья. */
+  private readonly props = new Map<string, { mesh: THREE.InstancedMesh; matrices: THREE.Matrix4[] }>();
 
   constructor(world: WorldData) {
     const trees = [
@@ -191,7 +209,8 @@ export class Forest {
     }
 
     this.addProps(bushGeometry(), world.bushes, 0.3, 0.02, true);
-    this.addProps(rockGeometry(), world.rocks, 0, 0, true);
+    this.addProps(rockGeometry(), world.rocks, 0, 0, true, 'rock');
+    this.addProps(pebbleGeometry(), world.pebbles, 0, 0, false, 'pebble');
     this.addGrass(world.grass);
   }
 
@@ -235,8 +254,10 @@ export class Forest {
     swayBase: number,
     swayScale: number,
     shadow: boolean,
+    key?: string,
   ): void {
     const mesh = this.makeInstanced(geo, list.length, swayBase, swayScale, shadow);
+    const matrices: THREE.Matrix4[] = [];
     const m = new THREE.Matrix4();
     list.forEach((p, i) => {
       m.compose(
@@ -245,9 +266,26 @@ export class Forest {
         new THREE.Vector3(p.scale, p.scale, p.scale),
       );
       mesh.setMatrixAt(i, m);
+      matrices.push(m.clone());
     });
     mesh.instanceMatrix.needsUpdate = true;
+    if (key) this.props.set(key, { mesh, matrices });
     this.group.add(mesh);
+  }
+
+  /** Разбитый валун или подобранный камешек исчезает до отрастания. */
+  setPropVisible(key: 'rock' | 'pebble', index: number, visible: boolean): void {
+    const entry = this.props.get(key);
+    if (!entry || !entry.matrices[index]) return;
+    const original = entry.matrices[index];
+    if (visible) {
+      entry.mesh.setMatrixAt(index, original);
+    } else {
+      const hidden = new THREE.Matrix4().makeScale(0, 0, 0);
+      hidden.setPosition(original.elements[12], original.elements[13], original.elements[14]);
+      entry.mesh.setMatrixAt(index, hidden);
+    }
+    entry.mesh.instanceMatrix.needsUpdate = true;
   }
 
   private addGrass(list: PropInstance[]): void {

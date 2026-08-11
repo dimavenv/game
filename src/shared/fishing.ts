@@ -1,4 +1,5 @@
 import { ECONOMY } from './balance';
+import type { ItemId } from './items';
 import { clamp, lerp } from './rng';
 
 export type FishKind = 'crucian' | 'perch' | 'bighead' | 'boot';
@@ -86,10 +87,39 @@ export function fishPrice(fish: CaughtFish): number {
   return Math.round(lerp(spec.price[0], spec.price[1], t));
 }
 
+/** Чем рыба лежит в рюкзаке. */
+export function fishItemId(kind: FishKind): ItemId {
+  switch (kind) {
+    case 'crucian':
+      return 'fish_crucian';
+    case 'perch':
+      return 'fish_perch';
+    case 'bighead':
+      return 'fish_bighead';
+    case 'boot':
+      return 'boot';
+  }
+}
+
+export function fishKindOfItem(id: ItemId): FishKind | null {
+  switch (id) {
+    case 'fish_crucian':
+      return 'crucian';
+    case 'fish_perch':
+      return 'perch';
+    case 'fish_bighead':
+      return 'bighead';
+    case 'boot':
+      return 'boot';
+    default:
+      return null;
+  }
+}
+
+export const FISH_ITEMS: ItemId[] = ['fish_crucian', 'fish_perch', 'fish_bighead', 'boot'];
+
 export function fishLabel(fish: CaughtFish): string {
   return `${FISH[fish.kind].name}, ${fish.weight.toFixed(2)} кг`;
 }
 
-export function countFish(fish: CaughtFish[], kind: FishKind): number {
-  return fish.reduce((n, f) => n + (f.kind === kind ? 1 : 0), 0);
-}
+

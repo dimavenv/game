@@ -1,4 +1,4 @@
-import { FOREST, WORLD } from '../balance';
+import { FOREST, STONES, WORLD } from '../balance';
 import { ValueNoise, lerp, mulberry32, smoothstep, toSeed } from '../rng';
 import { hutLayout, stallLayout, type BoxCollider, type HutLayout, type StallLayout } from './buildings';
 import { ObstacleGrid, type Obstacle } from './grid';
@@ -33,6 +33,8 @@ export interface WorldData {
   grass: PropInstance[];
   /** Яблони: по ним ходят за яблоками для Буравчика. */
   appleTrees: PropInstance[];
+  /** Мелкие камешки: подбираются руками. */
+  pebbles: PropInstance[];
   monument: { x: number; z: number; y: number; rot: number };
   hut: HutLayout;
   stall: StallLayout;
@@ -177,6 +179,7 @@ export function generateWorld(seedInput: string | number): WorldData {
     bushes: scatter(FOREST.bushes, false, 3),
     rocks: scatter(FOREST.rocks, true, 0.5),
     grass: scatter(FOREST.grassTufts, false, 1.5),
+    pebbles: scatter(STONES.pebbles, true, 0.5),
     appleTrees,
     monument: {
       x: WORLD.monument.x,

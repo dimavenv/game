@@ -1,23 +1,9 @@
-import { CIGARETTE, ECONOMY } from './balance';
-import type { CaughtFish } from './fishing';
+import { ECONOMY } from './balance';
+import { addItem, createInventory, type Inventory } from './inventory';
 import type { ActiveQuest } from './quests';
+import type { PlacedStructure } from './world/building';
 
-/** Всё, что игрок несёт на себе. */
-export interface Inventory {
-  money: number;
-  apples: number;
-  logs: number;
-  fish: CaughtFish[];
-  cigarettes: number;
-  bandages: number;
-  shells: number;
-  hasRod: boolean;
-  hasFlashlight: boolean;
-  hasGoodAxe: boolean;
-  hasShotgun: boolean;
-}
-
-/** Что игрок сделал с лесом: срубил дерево, обобрал яблоню. */
+/** Что игрок сделал с лесом: срубил дерево, обобрал яблоню, разбил валун. */
 export interface TreeMutation {
   hits: number;
   /** День, когда дерево срубили; null — стоит целое. */
@@ -29,9 +15,22 @@ export interface AppleTreeState {
   pickedDay: number | null;
 }
 
+export interface BoulderState {
+  hits: number;
+  /** День, когда валун разбили; null — целый. */
+  brokenDay: number | null;
+}
+
 export interface WorldState {
   trees: Map<number, TreeMutation>;
   appleTrees: AppleTreeState[];
+  /** Валуны по индексу в world.rocks. */
+  boulders: Map<number, BoulderState>;
+  /** Подобранные камешки: индекс → день, когда подобрали. */
+  pebbles: Map<number, number>;
+  /** Всё, что игрок построил молотом. */
+  structures: PlacedStructure[];
+  nextStructureId: number;
   /** Сколько секунд ещё горит печь. */
   stoveFuel: number;
   /** День последней просьбы Буравчика прикурить. */
@@ -50,23 +49,19 @@ export interface GameState {
 }
 
 export function createGameState(appleTreeCount: number): GameState {
+  const inventory = createInventory(ECONOMY.startMoney);
+  // Стартовая пачка — единственное, с чем игрок приходит в лес.
+  addItem(inventory, 'cigarettes', 19);
+
   return {
-    inventory: {
-      money: ECONOMY.startMoney,
-      apples: 0,
-      logs: 0,
-      fish: [],
-      cigarettes: CIGARETTE.startPack,
-      bandages: 0,
-      shells: 0,
-      hasRod: false,
-      hasFlashlight: false,
-      hasGoodAxe: false,
-      hasShotgun: false,
-    },
+    inventory,
     world: {
       trees: new Map(),
       appleTrees: Array.from({ length: appleTreeCount }, () => ({ pickedDay: null })),
+      boulders: new Map(),
+      pebbles: new Map(),
+      structures: [],
+      nextStructureId: 1,
       stoveFuel: 0,
       lightUpDay: -99,
       tributeDay: -99,
@@ -92,4 +87,17 @@ export function applesReady(state: GameState, index: number, day: number, regrow
   const a = state.world.appleTrees[index];
   if (!a || a.pickedDay === null) return true;
   return day - a.pickedDay >= regrowDays;
+}
+
+/** Разбитый валун через пару суток снова обрастает обломками. */
+export function isBoulderBroken(state: GameState, index: number, day: number, regrowDays: number): boolean {
+  const b = state.world.boulders.get(index);
+  if (!b || b.brokenDay === null) return false;
+  return day - b.brokenDay < regrowDays;
+}
+
+export function isPebbleTaken(state: GameState, index: number, day: number, regrowDays: number): boolean {
+  const taken = state.world.pebbles.get(index);
+  if (taken === undefined) return false;
+  return day - taken < regrowDays;
 }

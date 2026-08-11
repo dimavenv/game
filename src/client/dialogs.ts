@@ -1,5 +1,7 @@
 import { ECONOMY } from '../shared/balance';
-import { fishLabel, fishPrice } from '../shared/fishing';
+import { FISH_ITEMS, fishKindOfItem, fishLabel, fishPrice } from '../shared/fishing';
+import { addItem, countItem, hasRoomFor, itemStacks, removeItem } from '../shared/inventory';
+import { ITEMS, type ItemId } from '../shared/items';
 import { completeQuest, questProgress, questReady, questText, rollQuest } from '../shared/quests';
 import type { GameState } from '../shared/state';
 import type { DialogSpec } from './ui/dialog';
@@ -100,26 +102,53 @@ interface ShopEntry {
   id: string;
   label: string;
   price: number;
+  /** Что кладётся в рюкзак при покупке. */
+  item?: { id: ItemId; count: number };
+  /** Инструменты покупаются один раз. */
   owned?: (state: GameState) => boolean;
+  buy?: (state: GameState) => void;
 }
 
 const SHOP: ShopEntry[] = [
-  { id: 'buy-cigarettes', label: 'Пачка сигарет (20)', price: ECONOMY.prices.cigarettes },
-  { id: 'buy-bandage', label: 'Бинт', price: ECONOMY.prices.bandage },
-  { id: 'buy-rod', label: 'Удочка', price: ECONOMY.prices.fishingRod, owned: (s) => s.inventory.hasRod },
+  { id: 'buy-cigarettes', label: 'Пачка сигарет (20)', price: ECONOMY.prices.cigarettes, item: { id: 'cigarettes', count: 20 } },
+  { id: 'buy-bandage', label: 'Бинт', price: ECONOMY.prices.bandage, item: { id: 'bandage', count: 1 } },
+  { id: 'buy-shells', label: 'Патроны, 5 шт.', price: ECONOMY.prices.shells5, item: { id: 'shells', count: 5 } },
+  { id: 'buy-bottles', label: 'Пустые бутылки, 5 шт.', price: ECONOMY.prices.bottles5, item: { id: 'bottle_empty', count: 5 } },
+  { id: 'buy-rod', label: 'Удочка', price: ECONOMY.prices.fishingRod, owned: (s) => s.inventory.hasRod, buy: (s) => { s.inventory.hasRod = true; } },
   {
     id: 'buy-flashlight',
     label: 'Фонарик',
     price: ECONOMY.prices.flashlight,
     owned: (s) => s.inventory.hasFlashlight,
+    buy: (s) => { s.inventory.hasFlashlight = true; },
   },
-  { id: 'buy-axe', label: 'Хороший топор', price: ECONOMY.prices.goodAxe, owned: (s) => s.inventory.hasGoodAxe },
-  { id: 'buy-shotgun', label: 'Дробовик', price: ECONOMY.prices.shotgun, owned: (s) => s.inventory.hasShotgun },
-  { id: 'buy-shells', label: 'Патроны, 5 шт.', price: ECONOMY.prices.shells5 },
+  { id: 'buy-hammer', label: 'Молот', price: ECONOMY.prices.hammer, owned: (s) => s.inventory.hasHammer, buy: (s) => { s.inventory.hasHammer = true; } },
+  { id: 'buy-axe', label: 'Хороший топор', price: ECONOMY.prices.goodAxe, owned: (s) => s.inventory.hasGoodAxe, buy: (s) => { s.inventory.hasGoodAxe = true; } },
+  { id: 'buy-shotgun', label: 'Дробовик', price: ECONOMY.prices.shotgun, owned: (s) => s.inventory.hasShotgun, buy: (s) => { s.inventory.hasShotgun = true; } },
 ];
 
+/** Что Томер скупает: ресурсы и улов. */
+const SELLABLE: ItemId[] = ['apple', 'log', 'stone', 'grape', 'wine_young', 'wine_aged', 'wine_vintage'];
+
+/** Цена стопки с учётом веса рыбы. */
+function stackValue(id: ItemId, count: number, weight?: number): number {
+  const kind = fishKindOfItem(id);
+  if (kind && weight !== undefined) return fishPrice({ kind, weight });
+  return ITEMS[id].sell * count;
+}
+
 export function fishValue(state: GameState): number {
-  return state.inventory.fish.reduce((sum, f) => sum + fishPrice(f), 0);
+  let sum = 0;
+  for (const id of FISH_ITEMS) {
+    for (const stack of itemStacks(state.inventory, id)) {
+      sum += stackValue(id, stack.count, stack.weight);
+    }
+  }
+  return sum;
+}
+
+function fishCount(state: GameState): number {
+  return FISH_ITEMS.reduce((n, id) => n + countItem(state.inventory, id), 0);
 }
 
 export function tomerDialog(state: GameState): DialogSpec {
@@ -134,28 +163,22 @@ export function tomerDialog(state: GameState): DialogSpec {
     };
   });
 
-  const catchValue = fishValue(state);
-  if (inv.fish.length > 0) {
+  const catchSize = fishCount(state);
+  if (catchSize > 0) {
     actions.push({
       id: 'sell-fish',
-      label: `Продать улов (${inv.fish.length})`,
-      note: `+${catchValue} ₪`,
+      label: `Продать улов (${catchSize})`,
+      note: `+${fishValue(state)} ₪`,
       disabled: false,
     });
   }
-  if (inv.apples > 0) {
+  for (const id of SELLABLE) {
+    const count = countItem(inv, id);
+    if (count <= 0) continue;
     actions.push({
-      id: 'sell-apples',
-      label: `Продать яблоки (${inv.apples})`,
-      note: `+${inv.apples * ECONOMY.sell.apple} ₪`,
-      disabled: false,
-    });
-  }
-  if (inv.logs > 0) {
-    actions.push({
-      id: 'sell-logs',
-      label: `Продать дрова (${inv.logs})`,
-      note: `+${inv.logs * ECONOMY.sell.log} ₪`,
+      id: `sell-${id}`,
+      label: `Продать: ${ITEMS[id].name} (${count})`,
+      note: `+${ITEMS[id].sell * count} ₪`,
       disabled: false,
     });
   }
@@ -179,63 +202,48 @@ export function tomerAction(id: string, state: GameState): DialogResult {
   const entry = SHOP.find((e) => e.id === id);
   if (entry) {
     if (inv.money < entry.price) return { toast: 'Не хватает шекелей', tone: 'bad', voice: 'tomer_poor' };
-    inv.money -= entry.price;
-    switch (id) {
-      case 'buy-cigarettes':
-        inv.cigarettes += 20;
-        break;
-      case 'buy-bandage':
-        inv.bandages += 1;
-        break;
-      case 'buy-rod':
-        inv.hasRod = true;
-        break;
-      case 'buy-flashlight':
-        inv.hasFlashlight = true;
-        break;
-      case 'buy-axe':
-        inv.hasGoodAxe = true;
-        break;
-      case 'buy-shotgun':
-        inv.hasShotgun = true;
-        break;
-      case 'buy-shells':
-        inv.shells += 5;
-        break;
-      default:
-        break;
+    if (entry.item && !hasRoomFor(inv, entry.item.id, entry.item.count)) {
+      return { toast: 'В рюкзаке нет места', tone: 'bad' };
     }
+    inv.money -= entry.price;
+    entry.buy?.(state);
+    if (entry.item) addItem(inv, entry.item.id, entry.item.count);
     return { toast: `${entry.label} — ${entry.price} ₪`, tone: 'money', sound: 'coins', voice: 'tomer_buy' };
   }
 
-  switch (id) {
-    case 'sell-fish': {
-      const sum = fishValue(state);
-      const best = [...inv.fish].sort((a, b) => fishPrice(b) - fishPrice(a))[0];
-      inv.fish = [];
-      inv.money += sum;
-      return {
-        toast: best ? `Улов продан за ${sum} ₪ (лучший — ${fishLabel(best)})` : `Улов продан за ${sum} ₪`,
-        tone: 'money',
-        sound: 'coins',
-        voice: 'tomer_sell',
-      };
+  if (id === 'sell-fish') {
+    let sum = 0;
+    let best: { name: string; value: number } | null = null;
+    for (const fishId of FISH_ITEMS) {
+      for (const stack of itemStacks(inv, fishId)) {
+        const value = stackValue(fishId, stack.count, stack.weight);
+        sum += value;
+        const kind = fishKindOfItem(fishId);
+        if (kind && stack.weight !== undefined && (!best || value > best.value)) {
+          best = { name: fishLabel({ kind, weight: stack.weight }), value };
+        }
+      }
+      removeItem(inv, fishId, countItem(inv, fishId));
     }
-    case 'sell-apples': {
-      const sum = inv.apples * ECONOMY.sell.apple;
-      inv.apples = 0;
-      inv.money += sum;
-      return { toast: `Яблоки проданы за ${sum} ₪`, tone: 'money', sound: 'coins' };
-    }
-    case 'sell-logs': {
-      const sum = inv.logs * ECONOMY.sell.log;
-      inv.logs = 0;
-      inv.money += sum;
-      return { toast: `Дрова проданы за ${sum} ₪`, tone: 'money', sound: 'coins' };
-    }
-    case 'leave':
-      return { close: true };
-    default:
-      return {};
+    inv.money += sum;
+    return {
+      toast: best ? `Улов продан за ${sum} ₪ (лучший — ${best.name})` : `Улов продан за ${sum} ₪`,
+      tone: 'money',
+      sound: 'coins',
+      voice: 'tomer_sell',
+    };
   }
+
+  if (id.startsWith('sell-')) {
+    const itemId = id.slice(5) as ItemId;
+    const count = countItem(inv, itemId);
+    if (count <= 0) return {};
+    const sum = ITEMS[itemId].sell * count;
+    removeItem(inv, itemId, count);
+    inv.money += sum;
+    return { toast: `${ITEMS[itemId].name} — продано за ${sum} ₪`, tone: 'money', sound: 'coins', voice: 'tomer_sell' };
+  }
+
+  if (id === 'leave') return { close: true };
+  return {};
 }

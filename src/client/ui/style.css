@@ -479,3 +479,164 @@ body {
 #restart:hover {
   color: var(--ink);
 }
+
+#purse #weight {
+  font-size: 13px;
+  color: rgba(232, 226, 212, 0.4);
+}
+
+#purse #weight.over {
+  color: #d99b8a;
+}
+
+/* --- Рюкзак --- */
+#inventory {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  background: rgba(4, 6, 8, 0.62);
+  z-index: 8;
+}
+
+#inventory.hidden {
+  display: none;
+}
+
+.inv-panel {
+  display: flex;
+  gap: 18px;
+  align-items: flex-start;
+  padding: 22px;
+  background: rgba(14, 16, 18, 0.96);
+  border: 1px solid rgba(232, 226, 212, 0.18);
+  border-radius: 3px;
+}
+
+.inv-side.hidden {
+  display: none;
+}
+
+.inv-title {
+  font-size: 18px;
+  letter-spacing: 0.08em;
+  margin-bottom: 12px;
+  color: var(--ink);
+}
+
+.inv-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 58px);
+  gap: 6px;
+}
+
+.inv-chest .inv-grid {
+  grid-template-columns: repeat(6, 58px);
+}
+
+.inv-cell {
+  position: relative;
+  width: 58px;
+  height: 58px;
+  padding: 0;
+  background: rgba(232, 226, 212, 0.04);
+  border: 1px solid rgba(232, 226, 212, 0.12);
+  border-radius: 2px;
+  cursor: pointer;
+  font: inherit;
+  transition: border-color 0.12s ease;
+}
+
+.inv-cell:hover {
+  border-color: rgba(232, 226, 212, 0.45);
+}
+
+.inv-cell.held {
+  border-color: #d8bd76;
+  background: rgba(216, 189, 118, 0.14);
+}
+
+.inv-icon {
+  font-size: 26px;
+  line-height: 58px;
+}
+
+.inv-cell i {
+  position: absolute;
+  right: 4px;
+  bottom: 2px;
+  font-style: normal;
+  font-size: 13px;
+  color: var(--ink);
+  text-shadow: 0 1px 2px #000;
+}
+
+.inv-cell b {
+  position: absolute;
+  left: 4px;
+  top: 2px;
+  font-weight: normal;
+  font-size: 11px;
+  color: rgba(232, 226, 212, 0.55);
+}
+
+.inv-weight {
+  margin-top: 12px;
+  font-size: 14px;
+  color: rgba(232, 226, 212, 0.5);
+}
+
+.inv-weight.over {
+  color: #d99b8a;
+}
+
+.inv-help {
+  font-size: 13px;
+  color: rgba(232, 226, 212, 0.4);
+}
+
+/* --- Меню стройки --- */
+#build {
+  position: fixed;
+  left: 50%;
+  bottom: 78px;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 8px;
+  z-index: 6;
+}
+
+#build.hidden {
+  display: none;
+}
+
+.build-item {
+  min-width: 120px;
+  padding: 9px 12px;
+  font: inherit;
+  font-size: 14px;
+  text-align: left;
+  color: var(--ink);
+  background: rgba(10, 12, 14, 0.86);
+  border: 1px solid rgba(232, 226, 212, 0.16);
+  border-radius: 2px;
+  cursor: pointer;
+}
+
+.build-item.active {
+  border-color: #d8bd76;
+}
+
+.build-item.poor {
+  opacity: 0.45;
+}
+
+.build-item span {
+  display: block;
+  font-size: 12px;
+  color: rgba(232, 226, 212, 0.5);
+  margin-top: 3px;
+}

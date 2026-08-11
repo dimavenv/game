@@ -1,4 +1,4 @@
-import { countFish } from './fishing';
+import { countItem, removeItem } from './inventory';
 import type { GameState } from './state';
 
 export type QuestKind = 'apples' | 'fish' | 'zombies';
@@ -54,9 +54,9 @@ export function rollQuest(rng: () => number, allowZombies: boolean): ActiveQuest
 export function questProgress(quest: ActiveQuest, state: GameState): number {
   switch (quest.kind) {
     case 'apples':
-      return state.inventory.apples;
+      return countItem(state.inventory, 'apple');
     case 'fish':
-      return countFish(state.inventory.fish, 'bighead');
+      return countItem(state.inventory, 'fish_bighead');
     case 'zombies':
       return quest.progress;
   }
@@ -69,18 +69,8 @@ export function questReady(quest: ActiveQuest, state: GameState): boolean {
 /** Забирает у игрока то, что просили, и отдаёт шекели. */
 export function completeQuest(quest: ActiveQuest, state: GameState): number {
   const inv = state.inventory;
-  if (quest.kind === 'apples') {
-    inv.apples -= quest.target;
-  } else if (quest.kind === 'fish') {
-    let left = quest.target;
-    inv.fish = inv.fish.filter((f) => {
-      if (f.kind === 'bighead' && left > 0) {
-        left -= 1;
-        return false;
-      }
-      return true;
-    });
-  }
+  if (quest.kind === 'apples') removeItem(inv, 'apple', quest.target);
+  else if (quest.kind === 'fish') removeItem(inv, 'fish_bighead', quest.target);
   inv.money += quest.reward;
   state.quest = null;
   state.questsDone += 1;

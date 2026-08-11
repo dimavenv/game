@@ -3,6 +3,7 @@ import {
   APPLES,
   CHOP,
   ECONOMY,
+  STONES,
   FISHING,
   HEALTH,
   INTERACT,
@@ -14,7 +15,16 @@ import {
   WORLD,
   WORLD_SEED,
 } from '../shared/balance';
-import { fishLabel, rollFish } from '../shared/fishing';
+import { fishItemId, fishLabel, rollFish } from '../shared/fishing';
+import {
+  BLUEPRINTS,
+  CHEST_SLOTS,
+  placementError,
+  structureCollider,
+  type BlueprintId,
+  type PlacedStructure,
+} from '../shared/world/building';
+import { addItem, countItem, isOverloaded, removeItem } from '../shared/inventory';
 import { createPlayerState, stepPlayer, type PlayerState } from '../shared/movement';
 import { questProgress } from '../shared/quests';
 import { clamp, mulberry32, smoothstep } from '../shared/rng';
@@ -36,6 +46,7 @@ import { GameAudio } from './audio/audio';
 import { buravchikAction, buravchikDialog, tomerAction, tomerDialog } from './dialogs';
 import { Input } from './input';
 import { AxeItem } from './items/axe';
+import { HammerItem } from './items/hammer';
 import { CigaretteItem } from './items/cigarette';
 import { RodItem } from './items/rod';
 import { ShotgunItem } from './items/shotgun';
@@ -44,6 +55,7 @@ import { Interactions, type Target } from './interaction';
 import { createNpc, type NpcHandle } from './render/characters';
 import { Forest, TREE_HEIGHT } from './render/forest';
 import { buildAppleTree, buildMonument, ChopEffects, type AppleTreeHandle } from './render/nature';
+import { PlacedStructures } from './render/placed';
 import { Sky } from './render/sky';
 import { Smoke } from './render/smoke';
 import { buildSign } from './render/sign';
@@ -58,7 +70,9 @@ import {
 import { buildTerrainMesh } from './render/terrainMesh';
 import { ZombieView } from './render/zombies';
 import { Water } from './render/water';
+import { BuildMenu } from './ui/buildMenu';
 import { Dialog, type DialogSpec } from './ui/dialog';
+import { InventoryScreen } from './ui/inventory';
 import { Hud } from './ui/hud';
 import { Nameplate, Toasts } from './ui/labels';
 
@@ -70,7 +84,7 @@ const STEP_LENGTH = 1.75;
 /** Высота глаз, когда игрок сидит в кресле. */
 const SEAT_EYE = 1.12;
 
-type Slot = 1 | 2 | 3 | 4 | 5;
+type Slot = 1 | 2 | 3 | 4 | 5 | 6;
 
 export class Game {
   private readonly renderer: THREE.WebGLRenderer;
@@ -99,6 +113,13 @@ export class Game {
   private readonly axe: AxeItem;
   private readonly rod: RodItem;
   private readonly shotgun: ShotgunItem;
+  private readonly hammer: HammerItem;
+  private readonly placed = new PlacedStructures();
+  private readonly inventoryScreen = new InventoryScreen();
+  private readonly buildMenu = new BuildMenu();
+  private buildKind: BlueprintId = 'palisade';
+  private buildMode = false;
+  private readonly rockPoints: THREE.Vector3[] = [];
   private readonly zombieView = new ZombieView(40);
   private zombies: Zombie[] = [];
   private nextZombieId = 0;
@@ -203,7 +224,10 @@ export class Game {
     this.axe = new AxeItem(this.camera);
     this.rod = new RodItem(this.camera, this.scene, this.audio, this.rng);
     this.shotgun = new ShotgunItem(this.camera);
+    this.hammer = new HammerItem(this.camera);
     this.scene.add(this.zombieView.group);
+    this.scene.add(this.placed.group);
+    for (const rock of this.world.rocks) this.rockPoints.push(new THREE.Vector3(rock.x, rock.y, rock.z));
 
     // Прошлая партия, если она была.
     loadGame(this.state, this.clock, this.player);
@@ -223,6 +247,7 @@ export class Game {
       stove: this.hut.stovePosition,
       chair: new THREE.Vector3(seat.x, this.world.hut.floorY, seat.z),
       appleTrees: this.appleTrees.map((t) => t.position),
+      pebbles: this.world.pebbles.map((p) => new THREE.Vector3(p.x, p.y, p.z)),
     });
 
     this.input = new Input(canvas);
@@ -235,14 +260,23 @@ export class Game {
         return;
       }
       this.running = false;
-      // Выход из захвата ради диалога — не пауза.
-      if (this.dialog.isOpen) return;
+      // Выход из захвата ради диалога или рюкзака — не пауза.
+      if (this.dialog.isOpen || this.inventoryScreen.isOpen) return;
       this.hud.setVisible(false);
       this.onPause?.();
     };
 
     window.addEventListener('keydown', (e) => {
       if (e.code === 'Escape' && this.dialog.isOpen) this.dialog.close();
+      if ((e.code === 'Escape' || e.code === 'Tab') && this.inventoryScreen.isOpen) {
+        e.preventDefault();
+        this.inventoryScreen.close();
+      }
+    });
+    window.addEventListener('wheel', (e) => {
+      if (!this.buildMode) return;
+      this.buildMenu.cycle(e.deltaY > 0 ? 1 : -1, this.state.inventory);
+      this.buildKind = this.buildMenu.kind;
     });
     window.addEventListener('mousedown', (e) => {
       if (e.button === 0 && this.running) this.useItem();
@@ -312,6 +346,7 @@ export class Game {
     this.simulate(dt);
     this.cigarette.update(dt, this.camera);
     if (this.axe.update(dt)) this.applyAxeHit();
+    if (this.hammer.update(dt)) this.applyHammerHit();
     if (this.shotgun.update(dt) === 'reload-done') this.finishReload();
     if (this.bandaging > 0) this.bandaging -= dt;
     if (this.hurtFlash > 0) this.hurtFlash = Math.max(0, this.hurtFlash - dt * 1.6);
@@ -349,6 +384,8 @@ export class Game {
             forward,
             strafe,
             sprint,
+            jump: this.input.isDown('Space'),
+            overloaded: isOverloaded(this.state.inventory),
             dt: FIXED_DT,
             slowFactor: this.cigarette.speedMul,
             breathMax,
@@ -410,6 +447,9 @@ export class Game {
     if (this.input.wasPressed('Digit3')) pick(3, inv.hasShotgun, 'Дробовика нет — у Томера 900 ₪');
     if (this.input.wasPressed('Digit4')) pick(4, inv.hasRod, 'Удочки нет — у Томера 200 ₪');
     if (this.input.wasPressed('Digit5')) pick(5, inv.hasFlashlight, 'Фонарика нет — у Томера 150 ₪');
+    if (this.input.wasPressed('Digit6')) pick(6, inv.hasHammer, 'Молота нет — у Томера 280 ₪');
+    if (this.input.wasPressed('Tab')) this.openBackpack();
+    if (this.input.wasPressed('KeyB')) this.toggleBuildMode();
     if (this.input.wasPressed('KeyR') && this.slot === 3) this.reloadShotgun();
     if (this.input.wasPressed('KeyQ')) this.useBandage();
 
@@ -417,12 +457,22 @@ export class Game {
     this.axe.setVisible(this.slot === 2);
     this.rod.setVisible(this.slot === 4);
     this.shotgun.setVisible(this.slot === 3 && inv.hasShotgun);
+    this.hammer.setVisible(this.slot === 6 && inv.hasHammer);
+    if (this.buildMode && this.slot !== 6) this.setBuildMode(false);
     this.flashlight.intensity = this.slot === 5 && inv.hasFlashlight ? 10 : 0;
   }
 
   /** ЛКМ: у каждого предмета своё действие. */
   private useItem(): void {
     if (this.dying) return;
+    if (this.buildMode) {
+      this.placeStructure();
+      return;
+    }
+    if (this.slot === 6) {
+      if (this.hammer.swing()) this.audio.chop();
+      return;
+    }
     if (this.slot === 3) {
       const event = this.shotgun.fire();
       if (event === 'fired') this.fireShotgun();
@@ -451,7 +501,11 @@ export class Game {
 
   private catchFish(): void {
     const fish = rollFish(this.rng, isBlessed(this.state, this.clock.day));
-    this.state.inventory.fish.push(fish);
+    const left = addItem(this.state.inventory, fishItemId(fish.kind), 1, fish.weight);
+    if (left > 0) {
+      this.toasts.push('Рюкзак полон — рыба ушла обратно', 'bad');
+      return;
+    }
     this.audio.pickup();
     this.audio.playSlot('hero_fish');
     this.toasts.push(`Поймал: ${fishLabel(fish)}`, fish.kind === 'boot' ? 'bad' : 'normal');
@@ -501,8 +555,11 @@ export class Game {
       this.player.yaw,
     );
     this.audio.treeFall();
-    this.state.inventory.logs += CHOP.logsPerTree;
-    this.toasts.push(`Дерево свалено. Дров: +${CHOP.logsPerTree}`);
+    const left = addItem(this.state.inventory, 'log', CHOP.logsPerTree);
+    this.toasts.push(
+      left > 0 ? 'Дерево свалено, но брёвна не влезли в рюкзак' : `Дерево свалено. Брёвен: +${CHOP.logsPerTree}`,
+      left > 0 ? 'bad' : 'normal',
+    );
   }
 
   private newDay(): void {
@@ -518,6 +575,19 @@ export class Game {
       this.chopEffects.removeStump(id);
       this.state.world.trees.delete(id);
     }
+
+    for (const [index, boulder] of this.state.world.boulders) {
+      if (boulder.brokenDay === null) continue;
+      if (day - boulder.brokenDay < STONES.boulderRegrowDays) continue;
+      this.forest.setPropVisible('rock', index, true);
+      this.state.world.boulders.delete(index);
+    }
+    for (const [index, takenDay] of this.state.world.pebbles) {
+      if (day - takenDay < STONES.pebbleRegrowDays) continue;
+      this.forest.setPropVisible('pebble', index, true);
+      this.state.world.pebbles.delete(index);
+    }
+
     this.toasts.push(`Настал день ${day}`);
   }
 
@@ -541,6 +611,12 @@ export class Game {
       case 'stove':
         this.stokeStove();
         break;
+      case 'pebble':
+        this.pickPebble(target.index);
+        break;
+      case 'structure':
+        this.openChest(target.index);
+        break;
       case 'chair':
         this.seated = true;
         this.toasts.push(
@@ -555,7 +631,11 @@ export class Game {
   private pickApples(index: number): void {
     if (!applesReady(this.state, index, this.clock.day, APPLES.regrowDays)) return;
     const count = APPLES.minPerTree + Math.floor(this.rng() * (APPLES.maxPerTree - APPLES.minPerTree + 1));
-    this.state.inventory.apples += count;
+    const left = addItem(this.state.inventory, 'apple', count);
+    if (left >= count) {
+      this.toasts.push('В рюкзаке нет места', 'bad');
+      return;
+    }
     this.state.world.appleTrees[index].pickedDay = this.clock.day;
     this.appleTrees[index].setApples(false);
     this.audio.pickup();
@@ -563,11 +643,11 @@ export class Game {
   }
 
   private stokeStove(): void {
-    if (this.state.inventory.logs <= 0) {
+    if (countItem(this.state.inventory, 'log') <= 0) {
       this.toasts.push('Дров нет. Возьми топор и сходи в лес', 'bad');
       return;
     }
-    this.state.inventory.logs -= 1;
+    removeItem(this.state.inventory, 'log', 1);
     this.state.world.stoveFuel = Math.min(STOVE.maxFuel, this.state.world.stoveFuel + STOVE.secondsPerLog);
     this.audio.stoke();
     this.toasts.push('Полено в топке');
@@ -601,10 +681,10 @@ export class Game {
   private openBuravchik(): void {
     this.audio.playSlot('buravchik_greet');
     const day = this.clock.day;
-    const spec = (): DialogSpec => buravchikDialog(this.state, day, this.state.inventory.cigarettes > 0);
+    const spec = (): DialogSpec => buravchikDialog(this.state, day, countItem(this.state.inventory, 'cigarettes') > 0);
     this.openDialog(spec, (id) => {
       const result = buravchikAction(id, this.state, day, this.rng, this.clock.day > 1);
-      if (result.spentCigarette) this.state.inventory.cigarettes -= 1;
+      if (result.spentCigarette) removeItem(this.state.inventory, 'cigarettes', 1);
       this.applyDialogResult(result);
       return result.close === true;
     });
@@ -687,6 +767,8 @@ export class Game {
   private updateWorld(dt: number): void {
     this.sky.update(this.clock.t, this.camera);
     this.forest.update(dt);
+    this.placed.sync(this.state.world.structures);
+    this.updateGhost();
     this.chopEffects.update(dt);
     this.npcs.buravchik.update(dt);
     this.npcs.tomer.update(dt);
@@ -766,7 +848,9 @@ export class Game {
     if (this.seated) return 'W — встать';
     if (this.target && this.target.distance < INTERACT.npcRange) return this.target.hint;
     if (this.slot === 4) return this.rod.hint();
-    if (this.slot === 3) return this.shotgun.hint(this.state.inventory.shells);
+    if (this.buildMode) return `${BLUEPRINTS[this.buildKind].name}: ЛКМ — поставить`;
+    if (this.slot === 6) return 'ЛКМ — разбить валун · B — стройка';
+    if (this.slot === 3) return this.shotgun.hint(countItem(this.state.inventory, 'shells'));
     if (this.slot === 2) return this.zombies.length > 0 ? 'ЛКМ — бить' : 'ЛКМ — рубить';
     if (this.slot === 1) return this.cigarette.hint();
     return '';
@@ -776,6 +860,16 @@ export class Game {
   /** Возвращает картинку в согласие с загруженным состоянием мира. */
   private restoreWorldVisuals(): void {
     const day = this.clock.day;
+    for (const [index, boulder] of this.state.world.boulders) {
+      if (boulder.brokenDay === null) continue;
+      if (day - boulder.brokenDay >= STONES.boulderRegrowDays) continue;
+      this.forest.setPropVisible('rock', index, false);
+    }
+    for (const [index, takenDay] of this.state.world.pebbles) {
+      if (day - takenDay >= STONES.pebbleRegrowDays) continue;
+      this.forest.setPropVisible('pebble', index, false);
+    }
+    for (const structure of this.state.world.structures) this.registerStructureCollider(structure);
     for (const [id, mutation] of this.state.world.trees) {
       if (mutation.choppedDay === null) continue;
       if (day - mutation.choppedDay >= CHOP.regrowDays) continue;
@@ -847,27 +941,27 @@ export class Game {
   }
 
   private reloadShotgun(): void {
-    if (this.shotgun.startReload(this.state.inventory.shells) !== 'reload-start') return;
+    if (this.shotgun.startReload(countItem(this.state.inventory, 'shells')) !== 'reload-start') return;
     this.audio.reload();
   }
 
   /** Патроны уходят из кармана только когда перезарядка дошла до конца. */
   private finishReload(): void {
     const inv = this.state.inventory;
-    const take = Math.min(WEAPONS.shotgun.capacity - this.shotgun.loaded, inv.shells);
+    const take = Math.min(WEAPONS.shotgun.capacity - this.shotgun.loaded, countItem(inv, 'shells'));
     if (take <= 0) return;
-    inv.shells -= take;
+    removeItem(inv, 'shells', take);
     this.shotgun.loaded += take;
   }
 
   private useBandage(): void {
     const inv = this.state.inventory;
     if (this.player.health >= PLAYER.maxHealth) return;
-    if (inv.bandages <= 0) {
+    if (countItem(inv, 'bandage') <= 0) {
       this.toasts.push('Бинтов нет — у Томера 45 ₪', 'bad');
       return;
     }
-    inv.bandages -= 1;
+    removeItem(inv, 'bandage', 1);
     this.player.health = Math.min(PLAYER.maxHealth, this.player.health + HEALTH.bandageHeal);
     this.bandaging = HEALTH.bandageTime;
     this.audio.bandage();
@@ -909,9 +1003,12 @@ export class Game {
     const inv = this.state.inventory;
     const lost = Math.round(inv.money * ECONOMY.deathMoneyLoss);
     inv.money -= lost;
-    const catchSize = inv.fish.length;
-    inv.fish = [];
-    inv.apples = 0;
+    // Улов и яблоки теряются, снаряжение и остальное — нет.
+    let catchSize = 0;
+    for (const id of ['fish_crucian', 'fish_perch', 'fish_bighead', 'boot'] as const) {
+      catchSize += removeItem(inv, id, countItem(inv, id));
+    }
+    removeItem(inv, 'apple', countItem(inv, 'apple'));
 
     // Приходит в себя у печки следующим утром.
     this.clock.day += 1;
@@ -942,6 +1039,157 @@ export class Game {
     location.reload();
   }
 
+
+  /** Молот бьёт по валуну; по зомби он тоже работает, но слабее топора. */
+  private applyHammerHit(): void {
+    const victim = findMeleeTarget(this.zombies, this.player, WEAPONS.axe.range, WEAPONS.axe.arc);
+    if (victim) {
+      if (damageZombie(victim, WEAPONS.axe.damage * 0.8)) this.onZombieKilled();
+      return;
+    }
+
+    const index = this.interactions.findBoulder(this.player, this.state, this.clock.day, this.rockPoints);
+    if (index === null) return;
+
+    const boulders = this.state.world.boulders;
+    const boulder = boulders.get(index) ?? { hits: 0, brokenDay: null };
+    boulder.hits += 1;
+    if (boulder.hits >= STONES.boulderHits) {
+      boulder.hits = 0;
+      boulder.brokenDay = this.clock.day;
+      this.forest.setPropVisible('rock', index, false);
+      const left = addItem(this.state.inventory, 'stone', STONES.boulderStones);
+      this.toasts.push(
+        left > 0 ? 'Валун разбит, но камни не влезли' : `Валун разбит. Камней: +${STONES.boulderStones}`,
+        left > 0 ? 'bad' : 'normal',
+      );
+      this.audio.treeFall();
+    }
+    boulders.set(index, boulder);
+  }
+
+  private pickPebble(index: number): void {
+    if (addItem(this.state.inventory, 'stone', 1) > 0) {
+      this.toasts.push('В рюкзаке нет места', 'bad');
+      return;
+    }
+    this.state.world.pebbles.set(index, this.clock.day);
+    this.forest.setPropVisible('pebble', index, false);
+    this.audio.pickup();
+    this.toasts.push('Камень: +1');
+  }
+
+  private openBackpack(): void {
+    if (this.inventoryScreen.isOpen) {
+      this.inventoryScreen.close();
+      return;
+    }
+    document.exitPointerLock();
+    this.inventoryScreen.open(this.state.inventory, () => this.input.requestLock());
+  }
+
+  private openChest(id: number): void {
+    const chest = Interactions.structureById(this.state, id);
+    if (!chest) return;
+    if (!chest.storage) chest.storage = Array.from({ length: CHEST_SLOTS }, () => null);
+    document.exitPointerLock();
+    this.inventoryScreen.open(this.state.inventory, () => this.input.requestLock(), {
+      title: 'Сундук',
+      slots: chest.storage,
+    });
+  }
+
+  private toggleBuildMode(): void {
+    if (!this.state.inventory.hasHammer) {
+      this.toasts.push('Строить нечем — молот у Томера, 280 ₪', 'bad');
+      return;
+    }
+    this.setBuildMode(!this.buildMode);
+  }
+
+  private setBuildMode(on: boolean): void {
+    this.buildMode = on;
+    if (on) {
+      this.slot = 6;
+      this.buildMenu.open(this.state.inventory, (kind) => {
+        this.buildKind = kind;
+      });
+      this.buildKind = this.buildMenu.kind;
+      this.toasts.push('Стройка: колесо мыши — выбор, ЛКМ — поставить, B — выйти');
+    } else {
+      this.buildMenu.close();
+      this.placed.hideGhost();
+    }
+  }
+
+  /** Куда смотрит игрок на земле — туда и встанет призрак постройки. */
+  private buildTarget(): { x: number; z: number; y: number } {
+    const distance = 4.5;
+    const x = this.player.x - Math.sin(this.player.yaw) * distance;
+    const z = this.player.z - Math.cos(this.player.yaw) * distance;
+    const blueprint = BLUEPRINTS[this.buildKind];
+    const y = blueprint.onWater ? 0 : this.world.terrain.height(x, z);
+    return { x, z, y };
+  }
+
+  private updateGhost(): void {
+    if (!this.buildMode) return;
+    const { x, z, y } = this.buildTarget();
+    const error = placementError(
+      BLUEPRINTS[this.buildKind],
+      x,
+      z,
+      this.player.yaw,
+      this.world,
+      this.state.world.structures,
+    );
+    const affordable = this.buildMenu.affordable(this.state.inventory, this.buildKind);
+    this.placed.showGhost(this.buildKind, x, y, z, this.player.yaw, error === null && affordable);
+  }
+
+  private placeStructure(): void {
+    const blueprint = BLUEPRINTS[this.buildKind];
+    const inv = this.state.inventory;
+    if (!this.buildMenu.affordable(inv, this.buildKind)) {
+      this.toasts.push('Не хватает материалов', 'bad');
+      return;
+    }
+
+    const { x, z, y } = this.buildTarget();
+    const error = placementError(blueprint, x, z, this.player.yaw, this.world, this.state.world.structures);
+    if (error) {
+      this.toasts.push(error, 'bad');
+      return;
+    }
+
+    removeItem(inv, 'log', blueprint.logs);
+    removeItem(inv, 'stone', blueprint.stones);
+
+    const structure: PlacedStructure = {
+      id: this.state.world.nextStructureId++,
+      kind: this.buildKind,
+      x,
+      z,
+      y,
+      rot: this.player.yaw,
+      builtDay: this.clock.day,
+    };
+    if (this.buildKind === 'chest') structure.storage = Array.from({ length: CHEST_SLOTS }, () => null);
+    if (this.buildKind === 'cellar') structure.barrels = [];
+    if (this.buildKind === 'press') structure.juice = 0;
+    this.state.world.structures.push(structure);
+    this.registerStructureCollider(structure);
+
+    this.audio.chop();
+    this.toasts.push(`Построено: ${blueprint.name}`);
+    this.buildMenu.render(inv);
+  }
+
+  private registerStructureCollider(structure: PlacedStructure): void {
+    const collider = structureCollider(structure);
+    if (collider) this.world.boxes.push(collider);
+  }
+
   private updateHud(): void {
     const inv = this.state.inventory;
     this.hud.setClock(this.clock.t, this.clock.day);
@@ -952,12 +1200,13 @@ export class Game {
     this.hud.setBuzz(this.cigarette.warmth, this.cigarette.buzz);
     this.hud.setSlots(
       this.slot,
-      { 1: true, 2: true, 3: inv.hasShotgun, 4: inv.hasRod, 5: inv.hasFlashlight },
+      { 1: true, 2: true, 3: inv.hasShotgun, 4: inv.hasRod, 5: inv.hasFlashlight, 6: inv.hasHammer },
       {
-        1: String(inv.cigarettes),
-        3: inv.hasShotgun ? `${this.shotgun.loaded}/${inv.shells}` : '',
+        1: String(countItem(inv, 'cigarettes')),
+        3: inv.hasShotgun ? `${this.shotgun.loaded}/${countItem(inv, 'shells')}` : '',
         4: '',
         5: '',
+        6: '',
       },
     );
     this.hud.setHealth(this.player.health / PLAYER.maxHealth, this.hurtFlash, this.dying);

@@ -1,5 +1,6 @@
-import { FISH } from '../../shared/fishing';
-import type { Inventory } from '../../shared/state';
+import { FISH_ITEMS } from '../../shared/fishing';
+import { CARRY_LIMIT, countItem, totalWeight, type Inventory } from '../../shared/inventory';
+import { ITEMS } from '../../shared/items';
 import type { ActiveQuest } from '../../shared/quests';
 import { QUEST_TITLE, questText } from '../../shared/quests';
 import { PHASE_LABEL, clockLabel, phaseOf } from '../../shared/time';
@@ -27,6 +28,7 @@ export class Hud {
   private readonly damage = el('damage');
   private readonly fade = el('fade');
   private readonly health = el('health');
+  private readonly weight = el('weight');
   private readonly slots = new Map<number, HTMLElement>();
   private currentHint = '';
   private currentCarry = '';
@@ -55,22 +57,26 @@ export class Hud {
     this.hint.classList.toggle('show', text.length > 0);
   }
 
-  /** Деньги и то, что игрок несёт: пустые строки не показываем. */
+  /** Деньги, ноша и вес: пустые строки не показываем. */
   setPurse(inv: Inventory): void {
     this.money.textContent = `${inv.money} ₪`;
     const parts: string[] = [];
-    if (inv.apples > 0) parts.push(`яблоки ${inv.apples}`);
-    if (inv.logs > 0) parts.push(`дрова ${inv.logs}`);
-    if (inv.fish.length > 0) {
-      const bighead = inv.fish.filter((f) => f.kind === 'bighead').length;
-      parts.push(bighead > 0 ? `рыба ${inv.fish.length} (${FISH.bighead.name} ${bighead})` : `рыба ${inv.fish.length}`);
+    for (const id of ['apple', 'log', 'stone', 'grape'] as const) {
+      const n = countItem(inv, id);
+      if (n > 0) parts.push(`${ITEMS[id].name} ${n}`);
     }
-    if (inv.bandages > 0) parts.push(`бинты ${inv.bandages}`);
-    if (inv.shells > 0) parts.push(`патроны ${inv.shells}`);
+    const fish = FISH_ITEMS.reduce((n, id) => n + countItem(inv, id), 0);
+    if (fish > 0) parts.push(`рыба ${fish}`);
+
+    const weight = totalWeight(inv);
+    const weightText = `${weight.toFixed(1)}/${CARRY_LIMIT} кг`;
     const text = parts.join(' · ');
-    if (text === this.currentCarry) return;
-    this.currentCarry = text;
-    this.carry.textContent = text;
+    if (text !== this.currentCarry) {
+      this.currentCarry = text;
+      this.carry.textContent = text;
+    }
+    this.weight.textContent = weightText;
+    this.weight.classList.toggle('over', weight > CARRY_LIMIT);
   }
 
   setQuest(quest: ActiveQuest | null, progress: number): void {

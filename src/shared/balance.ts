@@ -57,6 +57,12 @@ export const PLAYER = {
   breathPenaltyPerCig: 0.05,
   breathPenaltyCap: 0.6,
   maxHealth: 100,
+  /** Прыжок: высота в метрах и во что он обходится дыханию. */
+  jumpHeight: 1.05,
+  jumpBreathCost: 1.0,
+  gravity: 18,
+  /** Перегруженный игрок не бегает и идёт медленнее. */
+  overloadSpeedFactor: 0.65,
 } as const;
 
 export const CIGARETTE = {
@@ -90,10 +96,15 @@ export const ECONOMY = {
     goodAxe: 350,
     shotgun: 900,
     shells5: 60,
+    hammer: 280,
+    vineSapling: 60,
+    bottles5: 30,
   },
   sell: {
     apple: 8,
     log: 12,
+    stone: 4,
+    grape: 10,
     crucian: [12, 25] as const,
     perch: [25, 45] as const,
     bighead: [60, 110] as const,
@@ -138,6 +149,16 @@ export const CHOP = {
   /** На какой дистанции топор достаёт до ствола. */
   range: 3.0,
   swingTime: 0.55,
+} as const;
+
+/** Камни: мелкие подбираются руками, валуны разбиваются молотом. */
+export const STONES = {
+  pebbles: 150,
+  pebbleRegrowDays: 2,
+  boulderHits: 4,
+  boulderStones: 3,
+  boulderRegrowDays: 2,
+  range: 2.6,
 } as const;
 
 /** Яблони. */

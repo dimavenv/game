@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { CIGARETTE } from '../../shared/balance';
 import { clamp } from '../../shared/rng';
-import type { Inventory } from '../../shared/state';
+import { countItem, removeItem, type Inventory } from '../../shared/inventory';
 import type { GameAudio } from '../audio/audio';
 import type { Smoke } from '../render/smoke';
 
@@ -133,7 +133,7 @@ export class CigaretteItem {
 
   hint(): string {
     if (this.state === 'none') {
-      return this.inventory.cigarettes > 0 ? '1 — закурить' : 'пачка пустая';
+      return countItem(this.inventory, 'cigarettes') > 0 ? '1 — закурить' : 'пачка пустая';
     }
     if (this.state === 'lit') return '1 — затянуться';
     return '';
@@ -145,8 +145,7 @@ export class CigaretteItem {
 
   press(): void {
     if (this.state === 'none') {
-      if (this.inventory.cigarettes <= 0) return;
-      this.inventory.cigarettes -= 1;
+      if (removeItem(this.inventory, 'cigarettes', 1) <= 0) return;
       this.smokedToday += 1;
       this.burn = CIGARETTE.burnTime;
       this.setState('lighting');

@@ -1,14 +1,24 @@
 import * as THREE from 'three';
-import { APPLES, CHOP, INTERACT } from '../shared/balance';
-import { applesReady, isTreeDown, type GameState } from '../shared/state';
+import { APPLES, CHOP, INTERACT, STONES } from '../shared/balance';
+import { BLUEPRINTS, type PlacedStructure } from '../shared/world/building';
+import { countItem } from '../shared/inventory';
+import { applesReady, isBoulderBroken, isPebbleTaken, isTreeDown, type GameState } from '../shared/state';
 import type { PlayerState } from '../shared/movement';
 import type { WorldData } from '../shared/world/worldgen';
 
-export type TargetKind = 'buravchik' | 'tomer' | 'apple' | 'monument' | 'stove' | 'chair';
+export type TargetKind =
+  | 'buravchik'
+  | 'tomer'
+  | 'apple'
+  | 'monument'
+  | 'stove'
+  | 'chair'
+  | 'pebble'
+  | 'structure';
 
 export interface Target {
   kind: TargetKind;
-  /** Индекс яблони, если это яблоня. */
+  /** Индекс яблони или камешка; для постройки — её id. */
   index: number;
   /** Ник для всплывающей подписи (только у людей). */
   name?: string;
@@ -26,6 +36,7 @@ export interface InteractionPoints {
   stove: THREE.Vector3;
   chair: THREE.Vector3;
   appleTrees: THREE.Vector3[];
+  pebbles: THREE.Vector3[];
 }
 
 /**
@@ -37,6 +48,11 @@ export class Interactions {
     private readonly world: WorldData,
     private readonly points: InteractionPoints,
   ) {}
+
+  /** Постройка по id — нужна, чтобы открыть сундук. */
+  static structureById(state: GameState, id: number): PlacedStructure | undefined {
+    return state.world.structures.find((s) => s.id === id);
+  }
 
   private facing(player: PlayerState, x: number, z: number): number {
     const dx = x - player.x;
@@ -106,7 +122,7 @@ export class Interactions {
 
     const stove = near(this.points.stove, INTERACT.range, 0.2);
     if (stove !== null) {
-      const logs = state.inventory.logs;
+      const logs = countItem(state.inventory, 'log');
       consider({
         kind: 'stove',
         index: -1,
@@ -121,6 +137,28 @@ export class Interactions {
       consider({ kind: 'chair', index: -1, hint: 'E — сесть', distance: chair, priority: 0 });
     }
 
+    // Постройки, с которыми можно что-то делать (пока только сундук).
+    for (const s of state.world.structures) {
+      if (s.kind !== 'chest') continue;
+      const d = Math.hypot(s.x - player.x, s.z - player.z);
+      if (d > INTERACT.range) continue;
+      if (this.facing(player, s.x, s.z) < 0.2) continue;
+      consider({
+        kind: 'structure',
+        index: s.id,
+        hint: `E — ${BLUEPRINTS[s.kind].name.toLowerCase()}`,
+        distance: d,
+        priority: 2,
+      });
+    }
+
+    this.points.pebbles.forEach((p, index) => {
+      if (isPebbleTaken(state, index, day, STONES.pebbleRegrowDays)) return;
+      const d = near(p, STONES.range, 0.15);
+      if (d === null) return;
+      consider({ kind: 'pebble', index, hint: 'E — подобрать камень', distance: d, priority: 1 });
+    });
+
     this.points.appleTrees.forEach((p, index) => {
       const d = near(p, APPLES.range + 1.2, 0.2);
       if (d === null) return;
@@ -131,6 +169,21 @@ export class Interactions {
       consider({ kind: 'apple', index, hint: 'E — нарвать яблок', distance: d, priority: 2 });
     });
 
+    return best;
+  }
+
+  /** Ближайший целый валун под молот. */
+  findBoulder(player: PlayerState, state: GameState, day: number, rocks: THREE.Vector3[]): number | null {
+    let best: number | null = null;
+    let bestDistance = Infinity;
+    rocks.forEach((p, index) => {
+      if (isBoulderBroken(state, index, day, STONES.boulderRegrowDays)) return;
+      const d = Math.hypot(p.x - player.x, p.z - player.z);
+      if (d > STONES.range || d > bestDistance) return;
+      if (this.facing(player, p.x, p.z) < 0.4) return;
+      best = index;
+      bestDistance = d;
+    });
     return best;
   }
 

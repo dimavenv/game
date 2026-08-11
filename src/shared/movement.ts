@@ -13,6 +13,11 @@ export interface PlayerState {
   z: number;
   /** Высота глаз над уровнем воды. */
   eyeY: number;
+  /** Высота ног: по ней считается прыжок. */
+  feetY: number;
+  /** Вертикальная скорость в прыжке. */
+  vy: number;
+  onGround: boolean;
   vx: number;
   vz: number;
   yaw: number;
@@ -34,6 +39,9 @@ export interface MoveInput {
   forward: number;
   strafe: number;
   sprint: boolean;
+  jump: boolean;
+  /** Рюкзак набит: бег запрещён, шаг короче. */
+  overloaded: boolean;
   dt: number;
   /** Множитель скорости от внешних эффектов (затяжка). */
   slowFactor: number;
@@ -47,6 +55,9 @@ export function createPlayerState(world: WorldData): PlayerState {
     x,
     z,
     eyeY: world.terrain.height(x, z) + PLAYER.eyeHeight,
+    feetY: world.terrain.height(x, z),
+    vy: 0,
+    onGround: true,
     vx: 0,
     vz: 0,
     yaw,
@@ -124,7 +135,7 @@ export function stepPlayer(state: PlayerState, input: MoveInput, world: WorldDat
   state.wading = depth > 0.02;
   state.surface = world.terrain.surface(state.x, state.z);
 
-  const wantsSprint = input.sprint && wishLen > 0.1 && !state.wading;
+  const wantsSprint = input.sprint && wishLen > 0.1 && !state.wading && !input.overloaded;
   const canSprint = wantsSprint && !state.exhausted && state.breath > 0;
   state.sprinting = canSprint;
 
@@ -152,6 +163,7 @@ export function stepPlayer(state: PlayerState, input: MoveInput, world: WorldDat
       ? PLAYER.sprintSpeed
       : PLAYER.walkSpeed;
   target *= input.slowFactor;
+  if (input.overloaded) target *= PLAYER.overloadSpeedFactor;
   // Идти в горку тяжелее, чем под горку.
   target *= 1 - clamp(world.terrain.slope(state.x, state.z), 0, 0.35);
 
@@ -185,8 +197,24 @@ export function stepPlayer(state: PlayerState, input: MoveInput, world: WorldDat
 
   state.speed = Math.hypot(state.vx, state.vz);
 
-  const ground = world.terrain.height(state.x, state.z);
-  const targetEye = Math.max(ground, WORLD.waterLevel - PLAYER.maxWadeDepth) + PLAYER.eyeHeight;
-  // Небольшое сглаживание, чтобы кочки не дёргали камеру.
-  state.eyeY += (targetEye - state.eyeY) * Math.min(1, 12 * dt);
+  // Прыжок и падение.
+  const ground = Math.max(world.terrain.height(state.x, state.z), WORLD.waterLevel - PLAYER.maxWadeDepth);
+  if (state.onGround) {
+    // Небольшое сглаживание, чтобы кочки не дёргали камеру.
+    state.feetY += (ground - state.feetY) * Math.min(1, 12 * dt);
+    if (input.jump && !state.wading && !input.overloaded && state.breath > PLAYER.jumpBreathCost) {
+      state.vy = Math.sqrt(2 * PLAYER.gravity * PLAYER.jumpHeight);
+      state.breath -= PLAYER.jumpBreathCost;
+      state.onGround = false;
+    }
+  } else {
+    state.vy -= PLAYER.gravity * dt;
+    state.feetY += state.vy * dt;
+    if (state.feetY <= ground) {
+      state.feetY = ground;
+      state.vy = 0;
+      state.onGround = true;
+    }
+  }
+  state.eyeY = state.feetY + PLAYER.eyeHeight;
 }
