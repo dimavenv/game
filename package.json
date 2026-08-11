@@ -1,0 +1,29 @@
+{
+  "name": "krugloe-ozero",
+  "version": "0.1.0",
+  "description": "Атмосферная игра: лес, квадратное Круглое озеро и сигарета",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dimavenv/game.git"
+  },
+  "bugs": {
+    "url": "https://github.com/dimavenv/game/issues"
+  },
+  "homepage": "https://github.com/dimavenv/game#readme",
+  "dependencies": {
+    "three": "^0.185.1"
+  },
+  "devDependencies": {
+    "@types/three": "^0.185.4",
+    "typescript": "^7.0.2",
+    "vite": "^8.2.1"
+  },
+  "private": true,
+  "type": "module"
+}

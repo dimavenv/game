@@ -1,0 +1,130 @@
+/**
+ * Все игровые числа живут здесь. Правится за секунду, без раскопок по коду.
+ * Файл общий для клиента и будущего сервера — баланс не должен расходиться.
+ */
+
+export const WORLD_SEED = 'krugloe-ozero';
+
+/** Мир: 400x400 метров, за BOUND начинается непроходимая чаща. */
+export const WORLD = {
+  half: 200,
+  bound: 196,
+  /** Озеро квадратное: расстояние считается по Чебышёву. Оно «Круглое». */
+  lakeHalf: 30,
+  waterLevel: 0,
+  /** Высота песчаного берега над водой. */
+  shoreHeight: 0.42,
+  /** Поляна под хижину и ларёк (этап 2) — здесь не растут деревья. */
+  clearing: { x: 78, z: 0, r: 17 },
+  /** Табличка «Круглое озеро» на северном берегу. */
+  sign: { x: -6, z: -33.5 },
+  /** Памятник Серёге Пирату — в глухом углу леса (этап 2). */
+  monument: { x: -118, z: 96 },
+} as const;
+
+export const TIME = {
+  /** Длительности фаз в секундах реального времени. */
+  dawn: 60,
+  day: 480,
+  dusk: 60,
+  night: 240,
+  /** Игра стартует ясным утром: солнце уже высоко, лес не тонет в тенях. */
+  startOffset: 185,
+  /** Ускорение времени, когда сидишь в кресле у горящей печки (этап 2). */
+  stoveTimeScale: 4,
+} as const;
+
+export const TIME_CYCLE = TIME.dawn + TIME.day + TIME.dusk + TIME.night;
+
+export const PLAYER = {
+  eyeHeight: 1.68,
+  radius: 0.38,
+  walkSpeed: 3.1,
+  sprintSpeed: 5.7,
+  /** Скорость по мелководью. */
+  wadeSpeed: 1.35,
+  accel: 22,
+  friction: 14,
+  /** Глубже этого в воду не лезем — по колено и хватит. */
+  maxWadeDepth: 0.55,
+  /** Полный запас бега в секундах и скорость восстановления. */
+  breathMax: 7,
+  breathRegen: 0.55,
+  breathRegenDelay: 0.9,
+  /** Чтобы снова побежать после полной одышки, надо отдышаться до этой доли. */
+  breathRecoverTo: 0.35,
+  /** Каждая выкуренная за день сигарета укорачивает дыхание на эту долю. */
+  breathPenaltyPerCig: 0.05,
+  breathPenaltyCap: 0.6,
+  maxHealth: 100,
+} as const;
+
+export const CIGARETTE = {
+  packSize: 20,
+  startPack: 19,
+  /** Сколько секунд горит сигарета целиком. */
+  burnTime: 130,
+  /** Затяжка отъедает лишнего от сигареты. */
+  puffBurn: 11,
+  lightingTime: 1.15,
+  inhaleTime: 0.85,
+  holdTime: 0.8,
+  exhaleTime: 1.35,
+  flickTime: 0.7,
+  /** Кайф: насколько сужается обзор, замедляется шаг и глохнут звуки. */
+  buzzRise: 2.4,
+  buzzDecay: 0.34,
+  fovNarrow: 3.5,
+  speedMul: 0.82,
+  warmth: 0.34,
+} as const;
+
+/** Экономика (этап 2). Шекели ₪. */
+export const ECONOMY = {
+  startMoney: 0,
+  prices: {
+    cigarettes: 35,
+    bandage: 45,
+    fishingRod: 200,
+    flashlight: 150,
+    goodAxe: 350,
+    shotgun: 900,
+    shells5: 60,
+  },
+  sell: {
+    apple: 8,
+    log: 12,
+    crucian: [12, 25] as const,
+    perch: [25, 45] as const,
+    bighead: [60, 110] as const,
+    boot: 1,
+  },
+  quests: {
+    apples: { count: 8, reward: 120 },
+    fish: { count: 3, reward: 250 },
+    zombies: { count: 6, reward: 300 },
+  },
+  /** «Дать прикурить Буравчику»: деньги и откат в игровых сутках. */
+  lightUpBuravchik: { reward: 40, cooldownDays: 1 },
+  /** Дань уважения Серёге Пирату: откат большой, благословение на сутки. */
+  pirateTribute: { cooldownDays: 3, blessingDays: 1 },
+  deathMoneyLoss: 0.3,
+} as const;
+
+/** Лес и растительность. */
+export const FOREST = {
+  /** Шаг сетки размещения деревьев в метрах. */
+  cell: 5,
+  baseDensity: 0.52,
+  /** Ближе к краю мира лес густеет до непролазного. */
+  thicketFrom: 150,
+  thicketDensity: 0.97,
+  /** Свободная полоса песка вокруг озера. */
+  shoreMargin: 6,
+  trunkRadius: 0.42,
+  grassTufts: 7000,
+  bushes: 900,
+  rocks: 260,
+  /** Яблони (этап 2). */
+  appleTrees: 15,
+} as const;

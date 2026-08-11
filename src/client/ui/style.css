@@ -1,0 +1,241 @@
+:root {
+  --ink: #e8e2d4;
+  --dim: rgba(232, 226, 212, 0.55);
+  font-family: 'Georgia', 'Times New Roman', serif;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+  overflow: hidden;
+  background: #05070a;
+  color: var(--ink);
+}
+
+#game {
+  display: block;
+  width: 100vw;
+  height: 100vh;
+}
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+}
+
+/* Тёплая волна от затяжки */
+#warm {
+  opacity: 0;
+  background: radial-gradient(
+    ellipse at 50% 60%,
+    rgba(255, 168, 84, 0.55) 0%,
+    rgba(214, 108, 40, 0.28) 45%,
+    rgba(90, 40, 12, 0.12) 100%
+  );
+  mix-blend-mode: soft-light;
+  transition: opacity 0.12s linear;
+}
+
+#vignette {
+  opacity: 0.55;
+  background: radial-gradient(ellipse at center, rgba(0, 0, 0, 0) 45%, rgba(0, 0, 0, 0.75) 100%);
+}
+
+#hud {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  user-select: none;
+}
+
+#hud.hidden {
+  display: none;
+}
+
+#clock {
+  position: absolute;
+  top: 22px;
+  left: 26px;
+  display: flex;
+  gap: 14px;
+  align-items: baseline;
+  font-size: 15px;
+  letter-spacing: 0.06em;
+  color: var(--dim);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
+}
+
+#clock #time {
+  font-size: 20px;
+  color: var(--ink);
+}
+
+#crosshair {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 5px;
+  height: 5px;
+  margin: -2.5px 0 0 -2.5px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.35);
+  box-shadow: 0 0 3px rgba(0, 0, 0, 0.8);
+}
+
+#hint {
+  position: absolute;
+  left: 50%;
+  bottom: 128px;
+  transform: translateX(-50%);
+  font-size: 16px;
+  color: var(--dim);
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.9);
+  opacity: 0;
+  transition: opacity 0.25s ease;
+  text-align: center;
+  white-space: pre-line;
+}
+
+#hint.show {
+  opacity: 1;
+}
+
+#slots {
+  position: absolute;
+  right: 26px;
+  bottom: 24px;
+  display: flex;
+  gap: 10px;
+}
+
+.slot {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 8px 14px;
+  border: 1px solid rgba(232, 226, 212, 0.18);
+  border-radius: 3px;
+  background: rgba(8, 10, 12, 0.4);
+  font-size: 14px;
+  color: var(--dim);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
+}
+
+.slot b {
+  color: var(--ink);
+  font-size: 13px;
+  opacity: 0.7;
+}
+
+.slot i {
+  font-style: normal;
+  color: var(--ink);
+  font-size: 16px;
+}
+
+.slot.active {
+  border-color: rgba(255, 190, 120, 0.5);
+}
+
+/* Дыхание: короткая полоска, видна только когда сбито */
+#breath {
+  position: absolute;
+  left: 50%;
+  bottom: 92px;
+  width: 140px;
+  height: 2px;
+  margin-left: -70px;
+  background: rgba(255, 255, 255, 0.12);
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+
+#breath.show {
+  opacity: 1;
+}
+
+#breath i {
+  display: block;
+  height: 100%;
+  width: 100%;
+  background: rgba(232, 226, 212, 0.75);
+  transform-origin: left center;
+}
+
+#menu {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: radial-gradient(ellipse at center, #10161a 0%, #05070a 75%);
+  z-index: 10;
+}
+
+#menu.hidden {
+  display: none;
+}
+
+.panel {
+  width: min(520px, 88vw);
+  text-align: center;
+}
+
+.panel h1 {
+  font-size: 46px;
+  font-weight: normal;
+  letter-spacing: 0.1em;
+  margin-bottom: 10px;
+}
+
+.tagline {
+  color: var(--dim);
+  font-size: 16px;
+  margin-bottom: 30px;
+  font-style: italic;
+}
+
+.controls {
+  list-style: none;
+  display: grid;
+  gap: 8px;
+  margin-bottom: 30px;
+  color: var(--dim);
+  font-size: 15px;
+}
+
+.controls b {
+  color: var(--ink);
+}
+
+#play {
+  font: inherit;
+  font-size: 18px;
+  letter-spacing: 0.12em;
+  padding: 12px 42px;
+  color: var(--ink);
+  background: transparent;
+  border: 1px solid rgba(232, 226, 212, 0.4);
+  border-radius: 2px;
+  cursor: pointer;
+  transition:
+    background 0.2s ease,
+    border-color 0.2s ease;
+}
+
+#play:hover {
+  background: rgba(232, 226, 212, 0.08);
+  border-color: rgba(232, 226, 212, 0.8);
+}
+
+.note {
+  margin-top: 20px;
+  font-size: 13px;
+  color: rgba(232, 226, 212, 0.35);
+}

@@ -1,0 +1,179 @@
+import { PLAYER, WORLD } from './balance';
+import { clamp } from './rng';
+import type { Obstacle } from './world/grid';
+import type { Surface } from './world/terrain';
+import type { WorldData } from './world/worldgen';
+
+/**
+ * Состояние игрока и шаг симуляции. Лежит в shared намеренно: когда появится
+ * сервер, он будет прогонять ровно этот же код по тем же вводам.
+ */
+export interface PlayerState {
+  x: number;
+  z: number;
+  /** Высота глаз над уровнем воды. */
+  eyeY: number;
+  vx: number;
+  vz: number;
+  yaw: number;
+  pitch: number;
+  /** Остаток дыхания в секундах. */
+  breath: number;
+  exhausted: boolean;
+  restTimer: number;
+  speed: number;
+  sprinting: boolean;
+  surface: Surface;
+  wading: boolean;
+  /** Пройденный путь — по нему отмеряются шаги. */
+  distance: number;
+  health: number;
+}
+
+export interface MoveInput {
+  forward: number;
+  strafe: number;
+  sprint: boolean;
+  dt: number;
+  /** Множитель скорости от внешних эффектов (затяжка). */
+  slowFactor: number;
+  /** Текущий потолок дыхания с учётом выкуренного за день. */
+  breathMax: number;
+}
+
+export function createPlayerState(world: WorldData): PlayerState {
+  const { x, z, yaw } = world.spawn;
+  return {
+    x,
+    z,
+    eyeY: world.terrain.height(x, z) + PLAYER.eyeHeight,
+    vx: 0,
+    vz: 0,
+    yaw,
+    pitch: 0,
+    breath: PLAYER.breathMax,
+    exhausted: false,
+    restTimer: 0,
+    speed: 0,
+    sprinting: false,
+    surface: 'grass',
+    wading: false,
+    distance: 0,
+    health: PLAYER.maxHealth,
+  };
+}
+
+const scratch: Obstacle[] = [];
+
+/** Пытается встать в точку, расталкивая игрока со стволов. null — нельзя. */
+function resolve(world: WorldData, x: number, z: number): [number, number] | null {
+  if (Math.abs(x) > WORLD.bound || Math.abs(z) > WORLD.bound) return null;
+  if (world.terrain.depth(x, z) > PLAYER.maxWadeDepth) return null;
+
+  let px = x;
+  let pz = z;
+  const near = world.obstacles.query(px, pz, 2.5, scratch);
+  for (const o of near) {
+    const dx = px - o.x;
+    const dz = pz - o.z;
+    const min = o.radius + PLAYER.radius;
+    const d2 = dx * dx + dz * dz;
+    if (d2 < min * min) {
+      const d = Math.sqrt(d2) || 1e-4;
+      px = o.x + (dx / d) * min;
+      pz = o.z + (dz / d) * min;
+    }
+  }
+
+  // Ствол мог вытолкнуть в воду или за границу — тогда шаг не засчитываем.
+  if (Math.abs(px) > WORLD.bound || Math.abs(pz) > WORLD.bound) return null;
+  if (world.terrain.depth(px, pz) > PLAYER.maxWadeDepth + 0.15) return null;
+  return [px, pz];
+}
+
+export function stepPlayer(state: PlayerState, input: MoveInput, world: WorldData): void {
+  const dt = input.dt;
+
+  const fwdX = -Math.sin(state.yaw);
+  const fwdZ = -Math.cos(state.yaw);
+  const rightX = -fwdZ;
+  const rightZ = fwdX;
+
+  let wishX = fwdX * input.forward + rightX * input.strafe;
+  let wishZ = fwdZ * input.forward + rightZ * input.strafe;
+  const wishLen = Math.hypot(wishX, wishZ);
+  if (wishLen > 1e-4) {
+    wishX /= wishLen;
+    wishZ /= wishLen;
+  }
+
+  const depth = world.terrain.depth(state.x, state.z);
+  state.wading = depth > 0.02;
+  state.surface = world.terrain.surface(state.x, state.z);
+
+  const wantsSprint = input.sprint && wishLen > 0.1 && !state.wading;
+  const canSprint = wantsSprint && !state.exhausted && state.breath > 0;
+  state.sprinting = canSprint;
+
+  if (canSprint) {
+    state.breath -= dt;
+    state.restTimer = 0;
+    if (state.breath <= 0) {
+      state.breath = 0;
+      state.exhausted = true;
+    }
+  } else {
+    state.restTimer += dt;
+    if (state.restTimer > PLAYER.breathRegenDelay) {
+      state.breath = Math.min(input.breathMax, state.breath + PLAYER.breathRegen * dt);
+    }
+    if (state.exhausted && state.breath >= input.breathMax * PLAYER.breathRecoverTo) {
+      state.exhausted = false;
+    }
+  }
+  state.breath = Math.min(state.breath, input.breathMax);
+
+  let target = state.wading
+    ? PLAYER.wadeSpeed
+    : canSprint
+      ? PLAYER.sprintSpeed
+      : PLAYER.walkSpeed;
+  target *= input.slowFactor;
+  // Идти в горку тяжелее, чем под горку.
+  target *= 1 - clamp(world.terrain.slope(state.x, state.z), 0, 0.35);
+
+  const targetVX = wishX * target * Math.min(wishLen, 1);
+  const targetVZ = wishZ * target * Math.min(wishLen, 1);
+  const rate = wishLen > 0.1 ? PLAYER.accel : PLAYER.friction;
+  state.vx += (targetVX - state.vx) * Math.min(1, rate * dt);
+  state.vz += (targetVZ - state.vz) * Math.min(1, rate * dt);
+
+  const nx = state.x + state.vx * dt;
+  const nz = state.z + state.vz * dt;
+  let pos = resolve(world, nx, nz);
+  if (!pos) {
+    // Скользим вдоль препятствия, а не залипаем в нём.
+    pos = resolve(world, nx, state.z);
+    if (pos) state.vz = 0;
+  }
+  if (!pos) {
+    pos = resolve(world, state.x, nz);
+    if (pos) state.vx = 0;
+  }
+  if (pos) {
+    const moved = Math.hypot(pos[0] - state.x, pos[1] - state.z);
+    state.distance += moved;
+    state.x = pos[0];
+    state.z = pos[1];
+  } else {
+    state.vx = 0;
+    state.vz = 0;
+  }
+
+  state.speed = Math.hypot(state.vx, state.vz);
+
+  const ground = world.terrain.height(state.x, state.z);
+  const targetEye = Math.max(ground, WORLD.waterLevel - PLAYER.maxWadeDepth) + PLAYER.eyeHeight;
+  // Небольшое сглаживание, чтобы кочки не дёргали камеру.
+  state.eyeY += (targetEye - state.eyeY) * Math.min(1, 12 * dt);
+}

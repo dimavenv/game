@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Круглое озеро</title>
+    <link
+      rel="icon"
+      href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>🚬</text></svg>"
+    />
+  </head>
+  <body>
+    <canvas id="game"></canvas>
+
+    <!-- Тёплый свет и виньетка от затяжки: дешевле полноценного постпроцессинга -->
+    <div id="warm" class="overlay"></div>
+    <div id="vignette" class="overlay"></div>
+
+    <div id="hud" class="hidden">
+      <div id="clock">
+        <span id="day">День 1</span>
+        <span id="time">06:20</span>
+        <span id="phase">утро</span>
+      </div>
+      <div id="crosshair"></div>
+      <div id="hint"></div>
+      <div id="slots">
+        <div class="slot" data-slot="1"><b>1</b><span>сигарета</span><i id="cigs">19</i></div>
+      </div>
+      <div id="breath"><i></i></div>
+    </div>
+
+    <div id="menu">
+      <div class="panel">
+        <h1>Круглое озеро</h1>
+        <p class="tagline">Лес, вода и одна сигарета до заката.</p>
+        <ul class="controls">
+          <li><b>WASD</b> — идти</li>
+          <li><b>Shift</b> — бежать, пока хватает дыхания</li>
+          <li><b>мышь</b> — смотреть</li>
+          <li><b>1</b> — закурить, ещё раз — затянуться</li>
+          <li><b>Esc</b> — пауза</li>
+        </ul>
+        <button id="play">Играть</button>
+        <p class="note">Игра захватит курсор мыши. Esc — вернуть.</p>
+      </div>
+    </div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
