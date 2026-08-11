@@ -4,6 +4,8 @@ import {
   CHOP,
   ECONOMY,
   AVI,
+  MOUNTAIN,
+  RIVER,
   STONES,
   WINE,
   FISHING,
@@ -95,11 +97,13 @@ import {
   type StallBuild,
 } from './render/structures';
 import { buildCatamaran, type CatamaranBuild } from './render/catamaran';
+import { buildGazebo, buildSwing, type GazeboBuild, type SwingBuild } from './render/mountain';
+import { RopeSwing } from './ropeswing';
 import { buildTerrainMesh } from './render/terrainMesh';
 import { PostFx } from './postfx';
 import { currentQuality } from './quality';
 import { ZombieView } from './render/zombies';
-import { Water } from './render/water';
+import { buildLake, buildRiver, type WaterSurface } from './render/water';
 import { BuildMenu } from './ui/buildMenu';
 import { Dialog, type DialogSpec } from './ui/dialog';
 import { InventoryScreen } from './ui/inventory';
@@ -139,7 +143,8 @@ export class Game {
   private readonly toasts = new Toasts();
 
   private readonly sky: Sky;
-  private readonly water: Water;
+  private readonly water: WaterSurface;
+  private readonly river: WaterSurface;
   private readonly forest: Forest;
   private readonly cover: GroundCover;
   private readonly smoke: Smoke;
@@ -147,6 +152,9 @@ export class Game {
   private readonly stall: StallBuild;
   private readonly campfire: CampfireBuild;
   private readonly catamaran: CatamaranBuild;
+  private readonly gazebo: GazeboBuild;
+  private readonly swingRig: SwingBuild;
+  private readonly ropeSwing: RopeSwing;
   private readonly chopEffects = new ChopEffects();
   private readonly appleTrees: AppleTreeHandle[] = [];
   private readonly npcs: { buravchik: NpcHandle; tomer: NpcHandle; avi: NpcHandle };
@@ -202,6 +210,7 @@ export class Game {
   private signSeen = false;
   /** Диалог закрыт, ждём клика: браузер не даёт вернуть захват мыши сразу после Esc. */
   private pendingLock = false;
+  private readonly swingExit = new THREE.Vector3();
   private readonly offerings: { position: THREE.Vector3; timer: number; wisp: number }[] = [];
   private readonly wind = new THREE.Vector3();
   private readonly raycaster = new THREE.Raycaster();
@@ -240,12 +249,40 @@ export class Game {
     this.scene.add(this.cover.group);
     this.scene.add(this.chopEffects.group);
 
-    this.water = new Water(q);
-    this.scene.add(this.water.mesh);
-    this.scene.add(buildSign(this.world.terrain));
+    this.water = buildLake(q);
+    this.river = buildRiver();
+    this.scene.add(this.water.mesh, this.river.mesh);
+
+    const terrain = this.world.terrain;
+    // Табличка у озера, табличка на вершине Петушка и табличка у Псекупса.
+    this.scene.add(
+      buildSign(['КРУГЛОЕ', 'ОЗЕРО'], WORLD.sign.x, terrain.height(WORLD.sign.x, WORLD.sign.z), WORLD.sign.z, Math.PI + 0.05),
+    );
+    const mountainSignX = MOUNTAIN.x + MOUNTAIN.sign.dx;
+    const mountainSignZ = MOUNTAIN.z + MOUNTAIN.sign.dz;
+    this.scene.add(
+      buildSign(
+        ['ГОРА', 'ПЕТУШОК'],
+        mountainSignX,
+        terrain.height(mountainSignX, mountainSignZ),
+        mountainSignZ,
+        Math.atan2(MOUNTAIN.sign.dx, MOUNTAIN.sign.dz),
+      ),
+    );
+    this.scene.add(
+      buildSign(
+        ['РЕКА', 'ПСЕКУПС'],
+        RIVER.sign.x,
+        terrain.height(RIVER.sign.x, RIVER.sign.z),
+        RIVER.sign.z,
+        Math.atan2(MOUNTAIN.x - RIVER.sign.x, MOUNTAIN.z - RIVER.sign.z),
+      ),
+    );
 
     this.catamaran = buildCatamaran(this.world.catamaran);
-    this.scene.add(this.catamaran.group);
+    this.gazebo = buildGazebo(terrain);
+    this.swingRig = buildSwing(terrain);
+    this.scene.add(this.catamaran.group, this.gazebo.group, this.swingRig.group);
 
     this.hut = buildHut(this.world.hut);
     this.stall = buildStall(this.world.stall);
@@ -296,6 +333,7 @@ export class Game {
 
     this.smoke = new Smoke();
     this.scene.add(this.smoke.points);
+    this.ropeSwing = new RopeSwing(this.swingRig, this.audio, this.smoke);
 
     this.cigarette = new CigaretteItem(this.camera, this.smoke, this.audio, this.state.inventory);
     this.axe = new AxeItem(this.camera);
@@ -326,6 +364,9 @@ export class Game {
       stove: this.hut.stovePosition,
       chair: new THREE.Vector3(seat.x, this.world.hut.floorY, seat.z),
       catamaran: new THREE.Vector3(board.x, WORLD.waterLevel, board.z),
+      // Целиться надо в лавку, а не в центр беседки.
+      gazebo: this.gazebo.seat,
+      swing: this.ropeSwing.grabPoint(new THREE.Vector3()),
       appleTrees: this.appleTrees.map((t) => t.position),
       pebbles: this.world.pebbles.map((p) => new THREE.Vector3(p.x, p.y, p.z)),
       vines: this.wildVines.map((v) => v.position),
@@ -483,7 +524,7 @@ export class Game {
 
     if (this.seat && (forward !== 0 || strafe !== 0)) this.seat = null;
 
-    if (!this.seat) {
+    if (!this.seat && !this.ropeSwing.active) {
       const breathMax = this.breathMax();
       this.accumulator += dt;
       let steps = 0;
@@ -510,6 +551,8 @@ export class Game {
     } else {
       this.player.speed = 0;
     }
+
+    this.updateSwing(dt);
 
     this.target = this.interactions.find(this.player, this.state, this.clock.day);
     if (this.input.wasPressed('KeyE')) this.interact();
@@ -589,7 +632,7 @@ export class Game {
 
   /** ЛКМ: у каждого предмета своё действие. */
   private useItem(): void {
-    if (this.dying || this.state.effects.using) return;
+    if (this.dying || this.state.effects.using || this.ropeSwing.active) return;
     if (this.buildMode) {
       this.placeStructure();
       return;
@@ -718,6 +761,7 @@ export class Game {
   }
 
   private interact(): void {
+    if (this.ropeSwing.active || this.state.effects.using) return;
     const target = this.target;
     if (!target) return;
 
@@ -763,6 +807,16 @@ export class Game {
         this.toasts.push('Сидишь на катамаране. Плыть, правда, некуда');
         break;
       }
+      case 'gazebo': {
+        const seat = this.gazebo.seat;
+        // Лавка высокая: садимся так, чтобы глаза были над перилами.
+        this.seat = { x: seat.x, y: seat.y - 0.42, z: seat.z, stove: false };
+        this.toasts.push('Вся карта как на ладони');
+        break;
+      }
+      case 'swing':
+        this.startSwing();
+        break;
       default:
         break;
     }
@@ -891,6 +945,14 @@ export class Game {
   }
 
   private syncCamera(dt: number): void {
+    if (this.ropeSwing.active) {
+      // Весь номер камеру ведёт тарзанка: и положение, и углы, и обзор.
+      this.camera.position.copy(this.ropeSwing.position);
+      this.camera.rotation.set(this.ropeSwing.pitch, this.ropeSwing.yaw, this.ropeSwing.roll);
+      this.camera.fov += (BASE_FOV + this.ropeSwing.fov - this.camera.fov) * Math.min(1, 10 * dt);
+      this.camera.updateProjectionMatrix();
+      return;
+    }
     if (this.seat) {
       this.camera.position.set(this.seat.x, this.seat.y + SEAT_EYE, this.seat.z);
       this.camera.rotation.set(this.player.pitch, this.player.yaw, 0);
@@ -970,6 +1032,7 @@ export class Game {
 
     const sunDir = this.sky.sun.position.clone().sub(this.camera.position).normalize();
     this.water.update(dt, sunDir, this.sky.sun.color, this.sky.skyColor, this.sky.sun.intensity);
+    this.river.update(dt, sunDir, this.sky.sun.color, this.sky.skyColor, this.sky.sun.intensity);
 
     // Ветерок гуляет по кругу — по нему сносит дым.
     this.wind.set(
@@ -991,7 +1054,10 @@ export class Game {
       }
     }
 
-    this.audio.setMuffle(Math.max(this.cigarette.muffle, drugMuffle(this.state.effects)));
+    this.hud.setUnderwater(this.ropeSwing.underwater * 0.9);
+    this.audio.setMuffle(
+      Math.max(this.cigarette.muffle, drugMuffle(this.state.effects), this.ropeSwing.underwater * 0.85),
+    );
     this.audio.update(dt, {
       night,
       windTarget: 0.4 + Math.sin(this.elapsed * 0.07) * 0.3,
@@ -1029,6 +1095,7 @@ export class Game {
   }
 
   private hintText(): string {
+    if (this.ropeSwing.active) return this.ropeSwing.hint;
     if (this.drugKit.active) return this.drugKit.hint;
     if (this.seat) return 'W — встать';
     if (this.target && this.target.distance < INTERACT.npcRange) return this.target.hint;
@@ -1236,6 +1303,30 @@ export class Game {
       'bad',
     );
     saveGame(this.state, this.clock, this.player);
+  }
+
+  /** Тарзанка: дальше камерой рулит номер, игрок стоит на месте. */
+  private startSwing(): void {
+    if (this.ropeSwing.active) return;
+    this.seat = null;
+    this.ropeSwing.start();
+    this.toasts.push('Ну поехали');
+  }
+
+  /** Ведёт номер и, когда он кончился, ставит игрока на берег. */
+  private updateSwing(dt: number): void {
+    if (!this.ropeSwing.active) return;
+    if (this.ropeSwing.update(dt, this.swingExit)) {
+      this.audio.setWind(0);
+      this.player.x = this.swingExit.x;
+      this.player.z = this.swingExit.z;
+      this.player.vx = 0;
+      this.player.vz = 0;
+      this.player.eyeY = this.world.terrain.height(this.player.x, this.player.z) + PLAYER.eyeHeight;
+      this.player.yaw = this.ropeSwing.yaw;
+      this.player.pitch = 0;
+      this.toasts.push('Вылез мокрый и довольный');
+    }
   }
 
   /** Сохранить прямо сейчас: нужно перед перезагрузкой страницы. */

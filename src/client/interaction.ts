@@ -23,6 +23,8 @@ export type TargetKind =
   | 'stove'
   | 'chair'
   | 'catamaran'
+  | 'gazebo'
+  | 'swing'
   | 'pebble'
   | 'vine'
   | 'structure';
@@ -50,6 +52,10 @@ export interface InteractionPoints {
   chair: THREE.Vector3;
   /** Корма катамарана: отсюда на него садятся. */
   catamaran: THREE.Vector3;
+  /** Лавка в беседке на вершине Петушка. */
+  gazebo: THREE.Vector3;
+  /** Перекладина тарзанки. */
+  swing: THREE.Vector3;
   appleTrees: THREE.Vector3[];
   pebbles: THREE.Vector3[];
   vines: THREE.Vector3[];
@@ -171,6 +177,17 @@ export class Interactions {
     const catamaran = near(this.points.catamaran, INTERACT.range + 0.6, 0.2);
     if (catamaran !== null) {
       consider({ kind: 'catamaran', index: -1, hint: 'E — сесть на катамаран', distance: catamaran, priority: 1 });
+    }
+
+    // Лавка идёт по дальней стороне: до неё с настила чуть дальше обычного.
+    const gazebo = near(this.points.gazebo, INTERACT.range + 1.2, 0.15);
+    if (gazebo !== null) {
+      consider({ kind: 'gazebo', index: -1, hint: 'E — сесть на лавку', distance: gazebo, priority: 0 });
+    }
+
+    const swing = near(this.points.swing, INTERACT.range + 1.2, 0.2);
+    if (swing !== null) {
+      consider({ kind: 'swing', index: -1, hint: 'E — схватиться за трос', distance: swing, priority: 2 });
     }
 
     // Постройки, с которыми есть что делать.

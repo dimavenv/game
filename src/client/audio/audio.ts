@@ -32,6 +32,8 @@ export class GameAudio {
   private windGain!: GainNode;
   private leavesGain!: GainNode;
   private waterGain!: GainNode;
+  /** Ветер в ушах: включается только на разгоне тарзанки и в полёте. */
+  private rushGain!: GainNode;
 
   private cricketTimer = 0;
   private started = false;
@@ -68,6 +70,7 @@ export class GameAudio {
     this.windGain = this.loopLayer('bandpass', 480, 0.7, 0.0);
     this.leavesGain = this.loopLayer('highpass', 1900, 0.5, 0.0);
     this.waterGain = this.loopLayer('bandpass', 340, 1.4, 0.0);
+    this.rushGain = this.loopLayer('bandpass', 1250, 0.55, 0.0);
 
     // Медленные порывы: низкочастотный осциллятор гуляет по громкости ветра.
     // Размах небольшой — он складывается с базовым уровнем, и на прежних 0.35
@@ -357,6 +360,26 @@ export class GameAudio {
     osc.stop(now + 0.62);
     // Стук щеколды в конце хода.
     window.setTimeout(() => this.blip(120, 0.05, 0.06, 'triangle'), opening ? 520 : 460);
+  }
+
+  /** Ветер в ушах на разгоне и в полёте: 0 — тишина, 1 — свист. */
+  setWind(level: number): void {
+    if (!this.ctx) return;
+    this.rushGain.gain.setTargetAtTime(level * 0.32, this.ctx.currentTime, 0.09);
+  }
+
+  /** Свист отрыва от перекладины. */
+  whoosh(): void {
+    this.burst({ duration: 0.5, attack: 0.08, gain: 0.16, type: 'bandpass', freq: 700, freqTo: 2200, q: 0.7 });
+  }
+
+  /** Приводнение: удар по воде и облако брызг следом. */
+  bigSplash(): void {
+    this.burst({ duration: 0.55, gain: 0.34, type: 'lowpass', freq: 1800, freqTo: 120, q: 0.7 });
+    this.burst({ duration: 0.9, attack: 0.03, gain: 0.2, type: 'highpass', freq: 2200 });
+    window.setTimeout(() => {
+      this.burst({ duration: 0.7, attack: 0.12, gain: 0.12, type: 'bandpass', freq: 900, freqTo: 300, q: 0.8 });
+    }, 180);
   }
 
   bandage(): void {

@@ -214,6 +214,14 @@ body {
   color: var(--ink);
 }
 
+/* Под водой: зелёная муть и тёмные края. */
+#underwater {
+  opacity: 0;
+  background:
+    radial-gradient(ellipse at center, rgba(30, 92, 96, 0.35) 0%, rgba(8, 38, 44, 0.85) 100%);
+  transition: opacity 0.12s linear;
+}
+
 /* --- Выбор качества картинки --- */
 #quality {
   display: grid;

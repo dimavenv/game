@@ -26,6 +26,7 @@ export class Hud {
   private readonly warm = el('warm');
   private readonly vignette = el('vignette');
   private readonly damage = el('damage');
+  private readonly underwater = el('underwater');
   private readonly fade = el('fade');
   private readonly health = el('health');
   private readonly weight = el('weight');
@@ -129,6 +130,11 @@ export class Hud {
   }
 
   /** Тёплая волна и подсевшая по краям картинка сразу после затяжки. */
+  /** Погружение: 0 — над водой, 1 — с головой. */
+  setUnderwater(amount: number): void {
+    this.underwater.style.opacity = amount.toFixed(3);
+  }
+
   setBuzz(warmth: number, buzz: number): void {
     this.warm.style.opacity = warmth.toFixed(3);
     this.vignette.style.opacity = (0.55 + buzz * 0.22).toFixed(3);

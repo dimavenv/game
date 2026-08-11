@@ -1,5 +1,21 @@
-import { WORLD } from '../balance';
+import { MOUNTAIN, RIVER, WORLD } from '../balance';
 import { ValueNoise, clamp, lerp, smoothstep, toSeed } from '../rng';
+
+/**
+ * Русло Псекупса: ломаная от западного края карты вдоль подножия горы и на юг.
+ * Ни одна точка не подходит к озеру ближе чем на сотню метров — пересекаться
+ * им незачем.
+ */
+export const RIVER_PATH: [number, number][] = [
+  [-396, 30],
+  [-300, 62],
+  [-232, 96],
+  [-176, 132],
+  [-146, 178],
+  [-134, 246],
+  [-152, 330],
+  [-140, 396],
+];
 
 export type Surface = 'water' | 'sand' | 'grass';
 
@@ -25,6 +41,53 @@ export class Terrain {
     return Math.max(Math.abs(x), Math.abs(z));
   }
 
+  /**
+   * Расстояние до оси реки. Высота считается миллионы раз за загрузку, поэтому
+   * сперва грубая отсечка по прямоугольнику — вся река лежит в западной
+   * половине карты.
+   */
+  static riverDistance(x: number, z: number): number {
+    if (x > -90 || x < -400 || z < 0 || z > 400) return 1e9;
+    let best = Infinity;
+    for (let i = 0; i < RIVER_PATH.length - 1; i++) {
+      const [ax, az] = RIVER_PATH[i];
+      const [bx, bz] = RIVER_PATH[i + 1];
+      const dx = bx - ax;
+      const dz = bz - az;
+      const t = clamp(((x - ax) * dx + (z - az) * dz) / (dx * dx + dz * dz), 0, 1);
+      const d = Math.hypot(x - (ax + dx * t), z - (az + dz * t));
+      if (d < best) best = d;
+    }
+    return best;
+  }
+
+  /** Гора Петушок: пологая юбка, крутые бока, плоская макушка под беседку. */
+  private mountain(x: number, z: number): number {
+    const d = Math.hypot(x - MOUNTAIN.x, z - MOUNTAIN.z);
+    if (d >= MOUNTAIN.radius) return 0;
+    const t = 1 - d / MOUNTAIN.radius;
+    // Куб сглаживания даёт вогнутую подошву и выпуклую вершину.
+    const profile = t * t * (3 - 2 * t);
+    // Рёбра и распадки по бокам, к макушке они сходят на нет.
+    const relief = (this.detail.fbm(x * 0.022, z * 0.022, 3) - 0.5) * 9 * smoothstep(0.05, 0.55, t);
+    const top = 1 - smoothstep(MOUNTAIN.topFlat * 0.6, MOUNTAIN.topFlat, d);
+    return MOUNTAIN.height * profile + relief * (1 - top);
+  }
+
+  /** Долина Псекупса: берега поднимаются над водой, русло вырезано ниже неё. */
+  private river(h: number, x: number, z: number): number {
+    const d = Terrain.riverDistance(x, z);
+    const valley = RIVER.bank * 1.8;
+    if (d > valley) return h;
+    // Сначала поднимаем берега, иначе река разольётся по низинам.
+    const raise = 1 - smoothstep(RIVER.bank, valley, d);
+    let out = lerp(h, Math.max(h, RIVER.level + 0.9), raise);
+    // Потом вырезаем само русло.
+    const cut = 1 - smoothstep(RIVER.halfWidth * 0.5, RIVER.bank, d);
+    out = lerp(out, RIVER.level - RIVER.depth, cut);
+    return out;
+  }
+
   height(x: number, z: number): number {
     const d = Terrain.lakeDistance(x, z);
 
@@ -45,6 +108,10 @@ export class Terrain {
     const beach = smoothstep(WORLD.lakeHalf, WORLD.lakeHalf + 26, d);
     let h = lerp(WORLD.shoreHeight, hills, beach);
 
+    // Гора: к самой кромке озера сходит на нет, чтобы пляж остался пляжем.
+    h += this.mountain(x, z) * smoothstep(WORLD.lakeHalf, WORLD.lakeHalf + 8, d);
+    h = this.river(h, x, z);
+
     // Поляна под хижину — ровная площадка.
     const c = WORLD.clearing;
     const cd = Math.hypot(x - c.x, z - c.z);
@@ -55,10 +122,18 @@ export class Terrain {
     return h;
   }
 
-  /** Глубина воды в точке: >0 — мокро. Вода есть только внутри озера. */
+  /** Уровень воды в точке: озеро, река или суша. */
+  waterLevelAt(x: number, z: number): number | null {
+    if (Terrain.lakeDistance(x, z) < WORLD.lakeHalf) return WORLD.waterLevel;
+    if (Terrain.riverDistance(x, z) < RIVER.bank) return RIVER.level;
+    return null;
+  }
+
+  /** Глубина воды в точке: >0 — мокро. Считается и для озера, и для реки. */
   depth(x: number, z: number): number {
-    if (Terrain.lakeDistance(x, z) >= WORLD.lakeHalf) return 0;
-    return WORLD.waterLevel - this.height(x, z);
+    const level = this.waterLevelAt(x, z);
+    if (level === null) return 0;
+    return level - this.height(x, z);
   }
 
   surface(x: number, z: number): Surface {
@@ -66,6 +141,9 @@ export class Terrain {
     const h = this.height(x, z);
     if (d < WORLD.lakeHalf && h < WORLD.waterLevel) return 'water';
     if (d < WORLD.lakeHalf + 2.5 && h < WORLD.shoreHeight + 0.35) return 'sand';
+    const rd = Terrain.riverDistance(x, z);
+    if (rd < RIVER.bank && h < RIVER.level) return 'water';
+    if (rd < RIVER.bank + 3) return 'sand';
     return 'grass';
   }
 

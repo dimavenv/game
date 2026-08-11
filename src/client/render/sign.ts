@@ -1,9 +1,7 @@
 import * as THREE from 'three';
-import { WORLD } from '../../shared/balance';
-import type { Terrain } from '../../shared/world/terrain';
 
 /** Выгоревшая доска: дерево, тёмные прожилки, буквы будто выжжены. */
-function signTexture(): THREE.CanvasTexture {
+function signTexture(lines: string[]): THREE.CanvasTexture {
   const c = document.createElement('canvas');
   c.width = 768;
   c.height = 320;
@@ -32,12 +30,17 @@ function signTexture(): THREE.CanvasTexture {
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillStyle = 'rgba(46, 28, 14, 0.92)';
-  ctx.font = 'bold 118px Georgia, serif';
+  // Длинные слова ужимаем, чтобы не вылезали за доску.
+  const longest = lines.reduce((a, b) => (a.length > b.length ? a : b), '');
+  const size = Math.min(118, Math.floor((c.width * 0.86 * 1.85) / Math.max(longest.length, 1)));
+  ctx.font = `bold ${size}px Georgia, serif`;
   ctx.save();
   ctx.translate(c.width / 2, c.height / 2);
   ctx.rotate(-0.012);
-  ctx.fillText('КРУГЛОЕ', 0, -58);
-  ctx.fillText('ОЗЕРО', 0, 62);
+  const step = size * 1.05;
+  lines.forEach((line, i) => {
+    ctx.fillText(line, 0, (i - (lines.length - 1) / 2) * step);
+  });
   ctx.restore();
 
   const tex = new THREE.CanvasTexture(c);
@@ -46,7 +49,14 @@ function signTexture(): THREE.CanvasTexture {
   return tex;
 }
 
-export function buildSign(terrain: Terrain): THREE.Group {
+/** Табличка на двух столбах: текст в одну-две строки, ставится куда скажут. */
+export function buildSign(
+  lines: string[],
+  x: number,
+  y: number,
+  z: number,
+  rotation: number,
+): THREE.Group {
   const group = new THREE.Group();
   const wood = new THREE.MeshStandardMaterial({ color: 0x6b5236, roughness: 1 });
 
@@ -67,14 +77,14 @@ export function buildSign(terrain: Terrain): THREE.Group {
 
   const face = new THREE.Mesh(
     new THREE.PlaneGeometry(2.34, 0.96),
-    new THREE.MeshStandardMaterial({ map: signTexture(), roughness: 1 }),
+    new THREE.MeshStandardMaterial({ map: signTexture(lines), roughness: 1 }),
   );
   face.position.set(0, 1.45, 0.038);
   group.add(face);
 
-  group.position.set(WORLD.sign.x, terrain.height(WORLD.sign.x, WORLD.sign.z), WORLD.sign.z);
-  // Развёрнута к лесу: читаешь надпись, поднимаешь глаза — а озеро квадратное.
-  group.rotation.y = Math.PI + 0.05;
+  group.position.set(x, y, z);
+  group.rotation.y = rotation;
+  // Слегка перекошена: стоит не первый год.
   group.rotation.z = 0.02;
   group.name = 'sign';
   return group;

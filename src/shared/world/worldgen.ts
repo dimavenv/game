@@ -1,8 +1,9 @@
-import { FOREST, STONES, WINE, WORLD } from '../balance';
+import { FOREST, MOUNTAIN, RIVER, STONES, SWING, WINE, WORLD } from '../balance';
 import { ValueNoise, lerp, mulberry32, smoothstep, toSeed } from '../rng';
 import {
   catamaranLayout,
   hutLayout,
+  mountainObstacles,
   stallLayout,
   type BoxCollider,
   type CatamaranLayout,
@@ -70,6 +71,12 @@ function treeDensity(x: number, z: number, glades: ValueNoise): number {
   if (Math.hypot(x - WORLD.sign.x, z - WORLD.sign.z) < 4) return 0;
   if (Math.hypot(x - SPAWN.x, z - SPAWN.z) < 3) return 0;
   if (Math.hypot(x - WORLD.monument.x, z - WORLD.monument.z) < 7) return 0;
+  // Макушка Петушка голая: беседку должно быть видно издалека.
+  if (Math.hypot(x - MOUNTAIN.x, z - MOUNTAIN.z) < MOUNTAIN.topFlat + 6) return 0;
+  // У тарзанки — вытоптанный пятачок.
+  if (Math.hypot(x - SWING.base.x, z - SWING.base.z) < 7) return 0;
+  // В русле и на урезе воды деревья не растут.
+  if (Terrain.riverDistance(x, z) < RIVER.bank + 2) return 0;
 
   const edge = Math.max(Math.abs(x), Math.abs(z));
   // К границе мира лес сгущается в стену, через которую не пройти.
@@ -134,6 +141,7 @@ export function generateWorld(seedInput: string | number): WorldData {
       if (Math.abs(x) > WORLD.bound || Math.abs(z) > WORLD.bound) continue;
       if (rng() > treeDensity(x, z, glades)) continue;
       if (terrain.slope(x, z) > 0.5) continue;
+      if (terrain.surface(x, z) === 'water') continue;
       // Вокруг яблони держим прогалину, иначе её не разглядеть в чаще.
       if (appleTrees.some((a) => Math.hypot(a.x - x, a.z - z) < 6)) continue;
       if (vines.some((v) => Math.hypot(v.x - x, v.z - z) < 5)) continue;
@@ -192,6 +200,7 @@ export function generateWorld(seedInput: string | number): WorldData {
   const stall = stallLayout(terrain);
   const catamaran = catamaranLayout();
   for (const o of catamaran.obstacles) obstacles.add({ x: o.x, z: o.z, radius: o.radius, id: -1 });
+  for (const o of mountainObstacles()) obstacles.add({ x: o.x, z: o.z, radius: o.radius, id: -1 });
 
   return {
     seed,

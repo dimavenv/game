@@ -1,4 +1,4 @@
-import { WORLD } from '../balance';
+import { MOUNTAIN, SWING, WORLD } from '../balance';
 import type { Terrain } from './terrain';
 
 /** Прямоугольное препятствие, выровненное по осям: стена, прилавок, печка. */
@@ -171,6 +171,24 @@ export function catamaranLayout(): CatamaranLayout {
     seat: { x: seat.x, y: WORLD.waterLevel + CATAMARAN.deckY, z: seat.z },
     obstacles,
   };
+}
+
+/**
+ * Столбы беседки на вершине и мачта тарзанки: сквозь них не ходят. Считаются
+ * здесь, а не в рендере, чтобы столкновения были одинаковыми у всех.
+ */
+export function mountainObstacles(): { x: number; z: number; radius: number }[] {
+  const out: { x: number; z: number; radius: number }[] = [];
+  for (let i = 0; i < 6; i++) {
+    const a = (i / 6) * Math.PI * 2 + Math.PI / 6;
+    out.push({
+      x: MOUNTAIN.x + Math.cos(a) * MOUNTAIN.gazeboRadius,
+      z: MOUNTAIN.z + Math.sin(a) * MOUNTAIN.gazeboRadius,
+      radius: 0.3,
+    });
+  }
+  out.push({ x: SWING.base.x, z: SWING.base.z, radius: 0.5 });
+  return out;
 }
 
 /** Костёр между хижиной и ларьком — ориентир на поляне. */
