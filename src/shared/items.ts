@@ -20,7 +20,9 @@ export type ItemId =
   | 'fish_perch'
   | 'fish_bighead'
   | 'boot'
-  | 'stash';
+  | 'cocaine'
+  | 'hash'
+  | 'heroin';
 
 export interface ItemSpec {
   name: string;
@@ -51,7 +53,9 @@ export const ITEMS: Record<ItemId, ItemSpec> = {
   fish_perch: { name: 'окунь', weight: 0.8, stack: 1, sell: 35, icon: '🐟' },
   fish_bighead: { name: 'толстолобик', weight: 3, stack: 1, sell: 85, icon: '🐠' },
   boot: { name: 'старый ботинок', weight: 1, stack: 1, sell: 1, icon: '👢' },
-  stash: { name: 'пакетик', weight: 0.05, stack: 5, sell: 40, icon: '🥠' },
+  cocaine: { name: 'кокаин', weight: 0.05, stack: 5, sell: 50, icon: '❄️' },
+  hash: { name: 'гашиш', weight: 0.05, stack: 5, sell: 30, icon: '🌿' },
+  heroin: { name: 'героин', weight: 0.05, stack: 5, sell: 70, icon: '💉' },
 };
 
 /** Вино по выдержке — порядок важен, по нему считается созревание. */

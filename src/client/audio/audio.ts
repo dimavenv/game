@@ -310,6 +310,11 @@ export class GameAudio {
     this.burst({ duration: 1.6, attack: 0.1, gain: 0.24, type: 'lowpass', freq: 700, freqTo: 60, q: 0.7 });
   }
 
+  /** Резкий короткий вдох носом. */
+  burstSniff(): void {
+    this.burst({ duration: 0.22, attack: 0.02, gain: 0.2, type: 'highpass', freq: 2600, freqTo: 900, q: 1.2 });
+  }
+
   bandage(): void {
     this.burst({ duration: 0.5, attack: 0.2, gain: 0.09, type: 'highpass', freq: 2400 });
   }

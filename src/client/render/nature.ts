@@ -40,12 +40,14 @@ export function buildAppleTree(prop: PropInstance): AppleTreeHandle {
   trunk.translate(0, 1.15, 0);
   parts.push(tint(trunk, 0x5a4230));
 
-  for (const [bx, by, bz, r] of [
+  // Крона: несколько шапок. Их же положения задают, где висеть яблокам.
+  const canopy: [number, number, number, number][] = [
     [0, 2.9, 0, 1.5],
     [0.95, 2.5, 0.35, 1.0],
     [-0.85, 2.55, -0.5, 1.05],
     [0.15, 2.35, -0.95, 0.85],
-  ]) {
+  ];
+  for (const [bx, by, bz, r] of canopy) {
     const blob = new THREE.IcosahedronGeometry(r, 0);
     blob.scale(1, 0.8, 1);
     blob.translate(bx, by, bz);
@@ -61,13 +63,18 @@ export function buildAppleTree(prop: PropInstance): AppleTreeHandle {
   const apples = new THREE.Group();
   const appleGeo = new THREE.IcosahedronGeometry(0.11, 0);
   const appleMat = new THREE.MeshStandardMaterial({ color: 0xc23b2b, roughness: 0.7, flatShading: true });
-  for (let i = 0; i < 9; i++) {
-    const a = (i / 9) * Math.PI * 2 + prop.rot;
-    const r = 0.9 + (i % 3) * 0.28;
-    const apple = new THREE.Mesh(appleGeo, appleMat);
-    apple.position.set(Math.cos(a) * r, 2.2 + ((i * 7) % 5) * 0.22, Math.sin(a) * r);
-    apple.castShadow = true;
-    apples.add(apple);
+  let n = 0;
+  for (const [bx, by, bz, r] of canopy) {
+    // По паре яблок под каждой шапкой кроны: раньше они висели в воздухе.
+    for (let k = 0; k < 2; k++) {
+      const a = (n / 8) * Math.PI * 2 + prop.rot;
+      const reach = r * 0.6;
+      const apple = new THREE.Mesh(appleGeo, appleMat);
+      apple.position.set(bx + Math.cos(a) * reach, by - r * 0.55, bz + Math.sin(a) * reach);
+      apple.castShadow = true;
+      apples.add(apple);
+      n += 1;
+    }
   }
   group.add(apples);
 

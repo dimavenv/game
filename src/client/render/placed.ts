@@ -53,23 +53,49 @@ function geometryFor(kind: BlueprintId): THREE.BufferGeometry {
         post(0.06, 1.1, 0x8a6a42, 0, 1.35, 0, 6),
       ]);
 
-    case 'cellar':
-      return merge([
-        // Каменное основание, дощатая крыша, торцы бочек.
-        box(4.4, 0.9, 3.6, STONE, 0, 0.45, 0),
-        box(4.6, 0.18, 3.8, DARK_WOOD, 0, 0.98, 0),
-        box(4.0, 1.1, 0.2, WOOD, 0, 1.6, -1.7),
-        box(4.0, 1.1, 0.2, WOOD, 0, 1.6, 1.7),
-        box(0.2, 1.1, 3.4, WOOD, -2.1, 1.6, 0),
-        box(0.2, 1.1, 3.4, WOOD, 2.1, 1.6, 0),
-        box(4.6, 0.16, 3.9, 0x4a4038, 0, 2.2, 0),
-        ...[-1.2, 0, 1.2].map((dx) => {
-          const barrel = new THREE.CylinderGeometry(0.42, 0.42, 0.9, 10);
-          barrel.rotateZ(Math.PI / 2);
-          barrel.translate(dx, 1.5, 1.35);
-          return tint(barrel, 0x5c3f28);
-        }),
-      ]);
+    case 'cellar': {
+      // Открытый навес: задняя и боковые стены, спереди видны бочки на стойке.
+      const parts: THREE.BufferGeometry[] = [
+        box(4.4, 0.3, 3.6, STONE, 0, 0.15, 0),
+        // Задняя стена и половинки боковых — внутрь видно.
+        box(4.4, 2.0, 0.3, STONE, 0, 1.3, -1.65),
+        box(0.3, 2.0, 2.2, STONE, -2.05, 1.3, -0.5),
+        box(0.3, 2.0, 2.2, STONE, 2.05, 1.3, -0.5),
+        // Столбы по открытому фасаду и балка над ними.
+        post(0.12, 2.3, DARK_WOOD, -2.0, 0.3, 1.6),
+        post(0.12, 2.3, DARK_WOOD, 2.0, 0.3, 1.6),
+        box(4.5, 0.18, 0.18, DARK_WOOD, 0, 2.6, 1.6),
+        // Стойка под бочки.
+        box(4.0, 0.16, 1.0, DARK_WOOD, 0, 0.72, -0.5),
+        box(4.0, 0.16, 1.0, DARK_WOOD, 0, 1.62, -0.5),
+      ];
+
+      // Бочки в два яруса, лежат на боку — торцы смотрят наружу.
+      for (const [dx, dy] of [
+        [-1.25, 1.12],
+        [0, 1.12],
+        [1.25, 1.12],
+        [-0.62, 2.02],
+        [0.62, 2.02],
+      ]) {
+        const barrel = new THREE.CylinderGeometry(0.36, 0.36, 0.86, 10);
+        barrel.rotateX(Math.PI / 2);
+        barrel.translate(dx, dy, -0.5);
+        parts.push(tint(barrel, 0x5c3f28));
+        const hoop = new THREE.TorusGeometry(0.37, 0.03, 4, 10);
+        hoop.translate(dx, dy, -0.12);
+        parts.push(tint(hoop, 0x3f3a34));
+      }
+
+      // Двускатная крыша поверх стен.
+      for (const dir of [-1, 1]) {
+        const slab = new THREE.BoxGeometry(4.9, 0.14, 2.35);
+        slab.rotateX(dir * 0.42);
+        slab.translate(0, 2.95, dir * 1.05);
+        parts.push(tint(slab, 0x4a4038));
+      }
+      return merge(parts);
+    }
 
     case 'palisade':
       return merge(

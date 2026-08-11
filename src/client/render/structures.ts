@@ -27,14 +27,22 @@ function box(w: number, h: number, d: number, hex: number, x: number, y: number,
   return tint(g, hex);
 }
 
+const LOG_RADIUS = 0.155;
+const LOG_STEP = 0.29;
+
+/** Сколько венцов уходит на стену и на какой высоте окажется её верх. */
+function logRows(height: number): { rows: number; top: number } {
+  const rows = Math.max(1, Math.ceil(height / LOG_STEP));
+  return { rows, top: LOG_RADIUS + (rows - 1) * LOG_STEP + LOG_RADIUS };
+}
+
 /** Венец сруба: горизонтальные брёвна вдоль стены. */
 function logWall(wall: WallSpec, baseY: number): THREE.BufferGeometry[] {
   const alongX = wall.hw > wall.hd;
   const length = alongX ? wall.hw * 2 : wall.hd * 2;
-  const radius = 0.155;
-  const step = 0.29;
-  // Один лишний венец: иначе между стеной и скатом остаётся щель со светом.
-  const rows = Math.max(1, Math.ceil(wall.height / step) + 1);
+  const radius = LOG_RADIUS;
+  const step = LOG_STEP;
+  const { rows } = logRows(wall.height);
   const parts: THREE.BufferGeometry[] = [];
   for (let i = 0; i < rows; i++) {
     const shade = i % 2 === 0 ? 0x6d5334 : 0x7a5c3a;
@@ -91,19 +99,19 @@ export function buildHut(hut: HutLayout): HutBuild {
   parts.push(box(hut.width + 0.4, 0.22, hut.depth + 0.4, 0x53422c, hut.x, y - 0.06, hut.z));
   for (const wall of hut.walls) parts.push(...logWall(wall, y));
 
-  // Крыша: два ската и фронтоны.
-  const ridge = y + hut.wallHeight + 1.15;
-  const slope = Math.atan2(1.15, hut.depth / 2 + 0.35);
+  // Крыша ложится ровно на верхний венец: и щели нет, и брёвна наружу не лезут.
+  const eave = y + logRows(hut.wallHeight).top;
+  const ridge = eave + 1.15;
+  const overhang = hut.depth / 2 + 0.35;
+  const slope = Math.atan2(1.15, overhang);
   for (const dir of [-1, 1]) {
-    const slab = new THREE.BoxGeometry(hut.width + 0.9, 0.14, Math.hypot(hut.depth / 2 + 0.35, 1.15) + 0.1);
+    const slab = new THREE.BoxGeometry(hut.width + 0.9, 0.14, Math.hypot(overhang, 1.15) + 0.1);
     slab.rotateX(dir * slope);
-    slab.translate(hut.x, (y + hut.wallHeight + ridge) / 2 - 0.05, hut.z + (dir * (hut.depth / 2 + 0.35)) / 2);
+    slab.translate(hut.x, (eave + ridge) / 2 - 0.02, hut.z + (dir * overhang) / 2);
     parts.push(tint(slab, 0x4a4038));
   }
   for (const dir of [-1, 1]) {
-    parts.push(
-      gable(hut.x + dir * (hut.width / 2), y + hut.wallHeight, hut.z, hut.depth / 2, 1.15, 0x6d5334),
-    );
+    parts.push(gable(hut.x + dir * (hut.width / 2), eave - 0.05, hut.z, hut.depth / 2, 1.2, 0x6d5334));
   }
 
   // Дверной проём: косяки и порог.
@@ -181,37 +189,42 @@ export function buildStall(stall: StallLayout): StallBuild {
   const parts: THREE.BufferGeometry[] = [];
   const c = stall.counter;
 
-  parts.push(box(c.hw * 2, 0.16, c.hd * 2, 0x8a6b41, c.x, y + 1.02, c.z));
-  parts.push(box(c.hw * 2 - 0.2, 0.9, 0.14, 0x6d5334, c.x, y + 0.5, c.z - c.hd + 0.1));
-  for (const dx of [-c.hw + 0.15, c.hw - 0.15]) {
-    parts.push(box(0.12, 1.0, c.hd * 2, 0x6d5334, c.x + dx, y + 0.5, c.z));
+  // Прилавок: столешница на тумбе, без парящих деталей.
+  const counterTop = y + 1.02;
+  parts.push(box(c.hw * 2 + 0.16, 0.1, c.hd * 2 + 0.12, 0x8a6b41, c.x, counterTop, c.z));
+  parts.push(box(c.hw * 2 - 0.1, 0.95, c.hd * 2 - 0.1, 0x6d5334, c.x, y + 0.48, c.z));
+
+  // Навес: столбы стоят на земле, крыша лежит ровно на их верхушках.
+  const postHeight = 2.35;
+  const postTop = y + postHeight;
+  const front = c.z - c.hd - 0.35;
+  const back = c.z + c.hd + 0.75;
+  for (const [px, pz] of [
+    [c.x - c.hw - 0.1, front],
+    [c.x + c.hw + 0.1, front],
+    [c.x - c.hw - 0.1, back],
+    [c.x + c.hw + 0.1, back],
+  ]) {
+    parts.push(box(0.13, postHeight, 0.13, 0x5b452c, px, y + postHeight / 2, pz));
   }
 
-  // Навес на четырёх столбах.
-  for (const [dx, dz] of [
-    [-c.hw, -c.hd - 0.2],
-    [c.hw, -c.hd - 0.2],
-    [-c.hw, c.hd + 0.7],
-    [c.hw, c.hd + 0.7],
-  ]) {
-    parts.push(box(0.12, 2.4, 0.12, 0x5b452c, c.x + dx, y + 1.2, c.z + dz));
-  }
-  const canopy = new THREE.BoxGeometry(c.hw * 2 + 0.7, 0.12, c.hd * 2 + 1.5);
-  canopy.rotateX(-0.18);
-  canopy.translate(c.x, y + 2.5, c.z + 0.2);
-  parts.push(tint(canopy, 0x4a5a48));
+  const canopyDepth = back - front + 0.5;
+  const canopy = new THREE.BoxGeometry(c.hw * 2 + 0.6, 0.11, canopyDepth);
+  canopy.rotateX(-0.12);
+  canopy.translate(c.x, postTop + 0.06, (front + back) / 2);
+  parts.push(tint(canopy, 0x6a7a5e));
 
   // Товар на прилавке.
-  parts.push(box(0.34, 0.22, 0.24, 0xb8563c, c.x - 1.0, y + 1.21, c.z));
-  parts.push(box(0.28, 0.3, 0.2, 0xd8cdb0, c.x - 0.55, y + 1.25, c.z + 0.05));
-  parts.push(box(0.5, 0.16, 0.3, 0x4d5a63, c.x + 0.9, y + 1.18, c.z - 0.05));
+  parts.push(box(0.3, 0.2, 0.22, 0xb8563c, c.x - 1.0, counterTop + 0.15, c.z));
+  parts.push(box(0.24, 0.28, 0.18, 0xd8cdb0, c.x - 0.55, counterTop + 0.19, c.z + 0.05));
+  parts.push(box(0.44, 0.14, 0.26, 0x4d5a63, c.x + 0.9, counterTop + 0.12, c.z - 0.05));
 
   const mesh = new THREE.Mesh(merge(parts), WOOD_MATERIAL());
   mesh.castShadow = true;
   mesh.receiveShadow = true;
   group.add(mesh);
 
-  const lampPosition = new THREE.Vector3(c.x, y + 2.3, c.z + 0.3);
+  const lampPosition = new THREE.Vector3(c.x, y + 2.1, c.z + 0.2);
   const bulb = new THREE.Mesh(
     new THREE.SphereGeometry(0.09, 8, 6),
     new THREE.MeshBasicMaterial({ color: 0xffd9a0 }),

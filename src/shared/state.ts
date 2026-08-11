@@ -1,6 +1,7 @@
 import { ECONOMY } from './balance';
 import { addItem, createInventory, type Inventory } from './inventory';
 import type { NightJob } from './avi';
+import { createDrugEffects, type DrugEffects } from './drugs';
 import type { ActiveQuest } from './quests';
 import type { PlacedStructure } from './world/building';
 
@@ -44,14 +45,6 @@ export interface WorldState {
   blessedUntilDay: number;
 }
 
-/** Временные состояния игрока: приход и утренний отходняк. */
-export interface Effects {
-  /** Сколько секунд ещё действует пакетик. */
-  stash: number;
-  /** До какого дня включительно качает после него. */
-  hangoverUntilDay: number;
-}
-
 export interface GameState {
   inventory: Inventory;
   world: WorldState;
@@ -59,7 +52,7 @@ export interface GameState {
   questsDone: number;
   /** Поручение Ави: сгорает с рассветом. */
   nightJob: NightJob | null;
-  effects: Effects;
+  effects: DrugEffects;
 }
 
 export function createGameState(appleTreeCount: number): GameState {
@@ -85,7 +78,7 @@ export function createGameState(appleTreeCount: number): GameState {
     quest: null,
     questsDone: 0,
     nightJob: null,
-    effects: { stash: 0, hangoverUntilDay: -99 },
+    effects: createDrugEffects(),
   };
 }
 

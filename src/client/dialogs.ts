@@ -1,4 +1,5 @@
 import { AVI, ECONOMY } from '../shared/balance';
+import { DRUGS } from '../shared/drugs';
 import { nightJobProgress, nightJobText, rollNightJob, type NightJob } from '../shared/avi';
 import { FISH_ITEMS, fishKindOfItem, fishLabel, fishPrice } from '../shared/fishing';
 import { addItem, countItem, hasRoomFor, itemStacks, removeItem } from '../shared/inventory';
@@ -256,7 +257,12 @@ export function tomerAction(id: string, state: GameState): DialogResult {
 const AVI_SHOP: ShopEntry[] = [
   { id: 'avi-shells', label: 'Патроны, 5 шт.', price: AVI.prices.shells5, item: { id: 'shells', count: 5 } },
   { id: 'avi-bandage', label: 'Бинт', price: AVI.prices.bandage, item: { id: 'bandage', count: 1 } },
-  { id: 'avi-stash', label: 'Пакетик', price: AVI.prices.stash, item: { id: 'stash', count: 1 } },
+  ...Object.values(DRUGS).map((drug) => ({
+    id: `avi-${drug.item}`,
+    label: drug.name[0].toUpperCase() + drug.name.slice(1),
+    price: drug.price,
+    item: { id: drug.item, count: 1 },
+  })),
 ];
 
 const WINES: ItemId[] = ['wine_young', 'wine_aged', 'wine_vintage'];

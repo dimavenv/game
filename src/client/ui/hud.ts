@@ -29,6 +29,7 @@ export class Hud {
   private readonly fade = el('fade');
   private readonly health = el('health');
   private readonly weight = el('weight');
+  private readonly resume = el('resume');
   private readonly slots = new Map<number, HTMLElement>();
   private currentHint = '';
   private currentCarry = '';
@@ -42,6 +43,11 @@ export class Hud {
 
   setVisible(visible: boolean): void {
     this.root.classList.toggle('hidden', !visible);
+  }
+
+  /** «Кликни, чтобы вернуться» — когда браузер не отдал захват мыши сразу. */
+  setResume(show: boolean): void {
+    this.resume.classList.toggle('hidden', !show);
   }
 
   setClock(t: number, day: number): void {

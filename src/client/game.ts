@@ -20,6 +20,18 @@ import {
 import { fishItemId, fishLabel, rollFish } from '../shared/fishing';
 import { GRADE_LABEL, daysToNextGrade, wineGrade, wineItem } from '../shared/wine';
 import { aviSpot, nightJobText, type AviSpot } from '../shared/avi';
+import {
+  DRUGS,
+  DRUG_BY_ITEM,
+  drugBreath,
+  drugBreathFree,
+  drugDamage,
+  drugDefersPain,
+  drugFov,
+  drugIncoming,
+  drugMuffle,
+  drugSpeed,
+} from '../shared/drugs';
 import type { ItemId } from '../shared/items';
 import {
   BLUEPRINTS,
@@ -169,6 +181,8 @@ export class Game {
   private saveTimer = 0;
   private wasDark = false;
   private signSeen = false;
+  /** Диалог закрыт, ждём клика: браузер не даёт вернуть захват мыши сразу после Esc. */
+  private pendingLock = false;
   private readonly offerings: { position: THREE.Vector3; timer: number; wisp: number }[] = [];
   private readonly wind = new THREE.Vector3();
   private readonly raycaster = new THREE.Raycaster();
@@ -291,6 +305,8 @@ export class Game {
     this.input = new Input(canvas);
     this.input.onLockChange = (locked) => {
       if (locked) {
+        this.pendingLock = false;
+        this.hud.setResume(false);
         this.running = true;
         this.hud.setVisible(true);
         this.input.endFrame();
@@ -298,11 +314,21 @@ export class Game {
         return;
       }
       this.running = false;
-      // Выход из захвата ради диалога или рюкзака — не пауза.
-      if (this.dialog.isOpen || this.inventoryScreen.isOpen) return;
+      // Выход из захвата ради диалога, рюкзака или ожидания клика — не пауза.
+      if (this.dialog.isOpen || this.inventoryScreen.isOpen || this.pendingLock) return;
       this.hud.setVisible(false);
       this.onPause?.();
     };
+
+    // Esc отпускает мышь, и браузер какое-то время не отдаёт захват обратно.
+    // Поэтому после закрытия панели просто ждём клика.
+    document.addEventListener('pointerlockerror', () => {
+      if (this.pendingLock) this.hud.setResume(true);
+    });
+    window.addEventListener('mousedown', () => {
+      if (!this.pendingLock || this.dialog.isOpen || this.inventoryScreen.isOpen) return;
+      this.input.requestLock();
+    });
 
     window.addEventListener('keydown', (e) => {
       if (e.code === 'Escape' && this.dialog.isOpen) this.dialog.close();
@@ -366,8 +392,7 @@ export class Game {
       this.cigarette.smokedToday * PLAYER.breathPenaltyPerCig,
       PLAYER.breathPenaltyCap,
     );
-    const hangover = this.clock.day <= this.state.effects.hangoverUntilDay ? AVI.hangoverBreath : 1;
-    return PLAYER.breathMax * (1 - penalty) * hangover;
+    return PLAYER.breathMax * (1 - penalty) * drugBreath(this.state.effects, this.clock.day);
   }
 
   private frame(now: number): void {
@@ -425,9 +450,9 @@ export class Game {
             sprint,
             jump: this.input.isDown('Space'),
             overloaded: isOverloaded(this.state.inventory),
-            noBreathDrain: this.state.effects.stash > 0,
+            noBreathDrain: drugBreathFree(this.state.effects),
             dt: FIXED_DT,
-            slowFactor: this.cigarette.speedMul * (this.state.effects.stash > 0 ? AVI.stashSpeed : 1),
+            slowFactor: this.cigarette.speedMul * drugSpeed(this.state.effects, this.clock.day),
             breathMax,
           },
           this.world,
@@ -455,10 +480,7 @@ export class Game {
       this.player.health = Math.min(PLAYER.maxHealth, this.player.health + HEALTH.stoveRegen * dt * scale);
     }
 
-    if (this.state.effects.stash > 0) {
-      this.state.effects.stash = Math.max(0, this.state.effects.stash - dt);
-      if (this.state.effects.stash === 0) this.toasts.push('Отпустило. Дыхания почти нет', 'bad');
-    }
+    this.updateDrugs(dt);
     this.updateAviAudio();
 
     this.saveTimer -= dt;
@@ -565,7 +587,7 @@ export class Game {
   /** Топор бьёт в середине замаха: сперва проверяем зомби, потом ствол. */
   private applyAxeHit(): void {
     const base = this.state.inventory.hasGoodAxe ? WEAPONS.axe.goodDamage : WEAPONS.axe.damage;
-    const damage = base * (this.state.effects.stash > 0 ? AVI.stashDamage : 1);
+    const damage = base * drugDamage(this.state.effects);
     const victim = findMeleeTarget(this.zombies, this.player, WEAPONS.axe.range, WEAPONS.axe.arc);
     if (victim) {
       if (damageZombie(victim, damage)) this.onZombieKilled();
@@ -773,8 +795,16 @@ export class Game {
         if (onAction(id)) this.dialog.close();
         else this.dialog.update(spec());
       },
-      () => this.input.requestLock(),
+      () => this.resumeAfterUi(),
     );
+  }
+
+  /** Панель закрылась: пробуем вернуть захват, иначе ждём клика игрока. */
+  private resumeAfterUi(): void {
+    this.pendingLock = true;
+    this.hud.setVisible(true);
+    this.hud.setResume(true);
+    this.input.requestLock();
   }
 
   private footsteps(): void {
@@ -809,10 +839,20 @@ export class Game {
     const bobY = Math.sin(this.bob * 2) * 0.035 * amp;
     const bobX = Math.cos(this.bob) * 0.028 * amp;
 
-    this.camera.position.set(this.player.x + bobX * 0.35, this.player.eyeY + bobY, this.player.z);
-    this.camera.rotation.set(this.player.pitch, this.player.yaw, Math.sin(this.bob) * 0.012 * amp);
+    // Тремор после кокаина: кадр мелко трясёт, целиться тяжело.
+    const tremor = this.state.effects.tremor > 0 ? AVI.tremorSway : 0;
+    const shakeX = tremor > 0 ? (Math.random() - 0.5) * tremor : 0;
+    const shakeY = tremor > 0 ? (Math.random() - 0.5) * tremor : 0;
 
-    const targetFov = BASE_FOV + this.cigarette.fovOffset + (this.player.sprinting ? 3.5 : 0);
+    this.camera.position.set(this.player.x + bobX * 0.35, this.player.eyeY + bobY, this.player.z);
+    this.camera.rotation.set(
+      this.player.pitch + shakeY,
+      this.player.yaw + shakeX,
+      Math.sin(this.bob) * 0.012 * amp,
+    );
+
+    const targetFov =
+      BASE_FOV + this.cigarette.fovOffset + drugFov(this.state.effects) + (this.player.sprinting ? 3.5 : 0);
     this.camera.fov += (targetFov - this.camera.fov) * Math.min(1, 6 * dt);
     this.camera.updateProjectionMatrix();
   }
@@ -862,7 +902,7 @@ export class Game {
       }
     }
 
-    this.audio.setMuffle(this.cigarette.muffle);
+    this.audio.setMuffle(Math.max(this.cigarette.muffle, drugMuffle(this.state.effects)));
     this.audio.update(dt, {
       night,
       windTarget: 0.4 + Math.sin(this.elapsed * 0.07) * 0.3,
@@ -1046,7 +1086,14 @@ export class Game {
   }
 
   private takeDamage(amount: number): void {
-    this.player.health -= amount;
+    const effects = this.state.effects;
+    if (drugDefersPain(effects)) {
+      // Боль не чувствуется — она копится и прилетит, когда отпустит.
+      effects.painDebt += amount;
+      this.hurtFlash = 0.4;
+      return;
+    }
+    this.player.health -= amount * drugIncoming(effects);
     this.hurtFlash = 1;
     this.audio.hurt();
     if (this.player.health <= 0) {
@@ -1151,7 +1198,7 @@ export class Game {
       return;
     }
     document.exitPointerLock();
-    this.inventoryScreen.open(this.state.inventory, () => this.input.requestLock());
+    this.inventoryScreen.open(this.state.inventory, () => this.resumeAfterUi());
   }
 
   private openChest(id: number): void {
@@ -1159,7 +1206,7 @@ export class Game {
     if (!chest) return;
     if (!chest.storage) chest.storage = Array.from({ length: CHEST_SLOTS }, () => null);
     document.exitPointerLock();
-    this.inventoryScreen.open(this.state.inventory, () => this.input.requestLock(), {
+    this.inventoryScreen.open(this.state.inventory, () => this.resumeAfterUi(), {
       title: 'Сундук',
       slots: chest.storage,
     });
@@ -1481,15 +1528,72 @@ export class Game {
       this.toasts.push('Съел яблоко');
       return;
     }
-    if (id === 'stash') {
-      if (removeItem(inv, 'stash', 1) <= 0) return;
-      this.state.effects.stash = AVI.stashDuration;
-      this.state.effects.hangoverUntilDay = this.clock.day;
-      this.audio.breath(true);
-      this.toasts.push('Понесло. До утра будет плохо', 'bad');
+    const drug = DRUG_BY_ITEM[id];
+    if (drug) {
+      this.takeDrug(drug);
       return;
     }
     this.toasts.push('Это не едят', 'bad');
+  }
+
+
+  /** Приход, отходняк и накопленная героином боль. */
+  private updateDrugs(dt: number): void {
+    const effects = this.state.effects;
+
+    if (effects.using) {
+      effects.using.time -= dt;
+      if (effects.using.time <= 0) {
+        const drug = effects.using.drug;
+        const spec = DRUGS[drug];
+        effects.using = null;
+        effects.active = { drug, time: spec.duration };
+        effects.painDebt = 0;
+        this.audio.breath(true);
+        this.toasts.push(`${spec.name[0].toUpperCase()}${spec.name.slice(1)} пошёл. Расплата будет к утру`, 'bad');
+      }
+    }
+
+    if (effects.active) {
+      effects.active.time -= dt;
+      if (effects.active.time <= 0) {
+        const spec = DRUGS[effects.active.drug];
+        const drug = effects.active.drug;
+        effects.active = null;
+        effects.after = { drug, untilDay: this.clock.day };
+        effects.tremor = spec.after.tremor;
+        this.toasts.push(spec.after.text, 'bad');
+
+        // Героин: всё, что не болело, прилетает разом.
+        const damage = effects.painDebt + spec.after.health;
+        effects.painDebt = 0;
+        if (damage > 0) this.takeDamage(damage);
+      }
+    }
+    if (effects.tremor > 0) effects.tremor = Math.max(0, effects.tremor - dt);
+  }
+
+  /** У каждого вида своё употребление: длительность, звук и ощущение. */
+  private takeDrug(drug: keyof typeof DRUGS): void {
+    const effects = this.state.effects;
+    if (effects.using || effects.active) {
+      this.toasts.push('И так уже хватит', 'bad');
+      return;
+    }
+    const spec = DRUGS[drug];
+    if (removeItem(this.state.inventory, spec.item, 1) <= 0) return;
+
+    effects.using = { drug, time: spec.useTime };
+    this.toasts.push(spec.useText);
+    if (this.audio.playSlot(`drug_${drug}`)) return;
+    if (drug === 'cocaine') {
+      this.audio.burstSniff();
+    } else if (drug === 'hash') {
+      this.audio.lighter();
+      this.audio.inhale(spec.useTime * 0.7);
+    } else {
+      this.audio.breath(true);
+    }
   }
 
   private updateHud(): void {
