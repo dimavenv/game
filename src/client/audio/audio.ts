@@ -206,6 +206,44 @@ export class GameAudio {
     });
   }
 
+  /** Всплеск: заброс поплавка, поклёвка, шаг в воду. */
+  splash(strength: number): void {
+    this.burst({ duration: 0.22 * strength + 0.12, gain: 0.1 + strength * 0.12, type: 'lowpass', freq: 1600, freqTo: 340, q: 0.8 });
+  }
+
+  /** Удар топора по стволу. */
+  chop(): void {
+    this.blip(120, 0.09, 0.16, 'triangle');
+    this.burst({ duration: 0.12, gain: 0.16, type: 'bandpass', freq: 900, freqTo: 300, q: 1.6 });
+  }
+
+  /** Дерево валится: долгий треск и глухой удар о землю. */
+  treeFall(): void {
+    this.burst({ duration: 1.1, attack: 0.25, gain: 0.12, type: 'bandpass', freq: 1800, freqTo: 500, q: 0.9 });
+    window.setTimeout(() => {
+      this.burst({ duration: 0.5, gain: 0.2, type: 'lowpass', freq: 500, freqTo: 90, q: 0.7 });
+    }, 1000);
+  }
+
+  /** Что-то положили в карман. */
+  pickup(): void {
+    this.blip(520, 0.07, 0.06, 'triangle');
+    this.burst({ duration: 0.09, gain: 0.05, type: 'highpass', freq: 2600 });
+  }
+
+  /** Шекели сменили владельца. */
+  coins(): void {
+    for (let i = 0; i < 3; i++) {
+      window.setTimeout(() => this.blip(900 + Math.random() * 500, 0.06, 0.05, 'square'), i * 55);
+    }
+  }
+
+  /** Полено легло в топку. */
+  stoke(): void {
+    this.burst({ duration: 0.3, gain: 0.13, type: 'lowpass', freq: 800, freqTo: 220, q: 0.7 });
+    this.burst({ duration: 0.7, attack: 0.2, gain: 0.07, type: 'bandpass', freq: 600, q: 0.6 });
+  }
+
   private cricket(): void {
     const pan = Math.random() * 1.6 - 0.8;
     const base = 4200 + Math.random() * 700;

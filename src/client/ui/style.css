@@ -239,3 +239,206 @@ body {
   font-size: 13px;
   color: rgba(232, 226, 212, 0.35);
 }
+
+/* --- Кошелёк, ноша и активное задание --- */
+#purse {
+  position: absolute;
+  top: 22px;
+  right: 26px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  font-size: 15px;
+  color: var(--dim);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
+}
+
+#purse #money {
+  font-size: 20px;
+  color: #e8d9a8;
+}
+
+#quest {
+  position: absolute;
+  top: 74px;
+  left: 26px;
+  max-width: 320px;
+  padding: 8px 12px;
+  border-left: 2px solid rgba(232, 226, 212, 0.35);
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--dim);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
+}
+
+#quest.hidden {
+  display: none;
+}
+
+#quest b {
+  display: block;
+  color: var(--ink);
+  font-weight: normal;
+  letter-spacing: 0.05em;
+}
+
+.slot.locked {
+  opacity: 0.32;
+}
+
+/* --- Ник над НПС --- */
+.nameplate {
+  position: fixed;
+  left: 0;
+  top: 0;
+  padding: 3px 10px;
+  font-size: 15px;
+  letter-spacing: 0.04em;
+  color: var(--ink);
+  background: rgba(8, 10, 12, 0.5);
+  border: 1px solid rgba(232, 226, 212, 0.2);
+  border-radius: 2px;
+  pointer-events: none;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
+  z-index: 5;
+}
+
+.nameplate.hidden {
+  display: none;
+}
+
+/* --- Всплывающие сообщения --- */
+#toasts {
+  position: fixed;
+  left: 26px;
+  bottom: 30px;
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 6px;
+  pointer-events: none;
+  z-index: 6;
+}
+
+.toast {
+  padding: 7px 14px;
+  font-size: 15px;
+  color: var(--ink);
+  background: rgba(8, 10, 12, 0.55);
+  border-left: 2px solid rgba(232, 226, 212, 0.4);
+  opacity: 1;
+  transition: opacity 0.7s ease;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
+}
+
+.toast-money {
+  border-left-color: #d8bd76;
+  color: #ecdcae;
+}
+
+.toast-bad {
+  border-left-color: #b46a5a;
+}
+
+.toast.fade {
+  opacity: 0;
+}
+
+/* --- Разговор с НПС --- */
+#dialog {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: rgba(4, 6, 8, 0.55);
+  z-index: 8;
+}
+
+#dialog.hidden {
+  display: none;
+}
+
+.dialog-panel {
+  width: min(560px, 92vw);
+  max-height: 82vh;
+  overflow-y: auto;
+  padding: 26px 28px 20px;
+  background: rgba(14, 16, 18, 0.96);
+  border: 1px solid rgba(232, 226, 212, 0.18);
+  border-radius: 3px;
+}
+
+.dialog-title {
+  font-size: 24px;
+  letter-spacing: 0.08em;
+  margin-bottom: 8px;
+}
+
+.dialog-speech {
+  font-style: italic;
+  color: var(--dim);
+  line-height: 1.55;
+  margin-bottom: 20px;
+  white-space: pre-line;
+}
+
+.dialog-actions {
+  display: grid;
+  gap: 6px;
+}
+
+.dialog-action {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 16px;
+  width: 100%;
+  padding: 11px 14px;
+  font: inherit;
+  font-size: 16px;
+  text-align: left;
+  color: var(--ink);
+  background: rgba(232, 226, 212, 0.05);
+  border: 1px solid rgba(232, 226, 212, 0.14);
+  border-radius: 2px;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.dialog-action:hover:not(:disabled) {
+  background: rgba(232, 226, 212, 0.12);
+}
+
+.dialog-action:disabled {
+  opacity: 0.38;
+  cursor: default;
+}
+
+.dialog-action i {
+  font-style: normal;
+  font-size: 14px;
+  color: #d8bd76;
+  white-space: nowrap;
+}
+
+.dialog-footer {
+  margin-top: 16px;
+  font-size: 14px;
+  color: var(--dim);
+  min-height: 1em;
+}
+
+.dialog-close {
+  margin-top: 18px;
+  font: inherit;
+  font-size: 14px;
+  color: var(--dim);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 4px 0;
+}
+
+.dialog-close:hover {
+  color: var(--ink);
+}

@@ -19,14 +19,28 @@
     <div id="hud" class="hidden">
       <div id="clock">
         <span id="day">День 1</span>
-        <span id="time">06:20</span>
-        <span id="phase">утро</span>
+        <span id="time">10:17</span>
+        <span id="phase">день</span>
       </div>
+
+      <div id="purse">
+        <span id="money">0 ₪</span>
+        <span id="carry"></span>
+      </div>
+
+      <div id="quest" class="hidden"></div>
+
       <div id="crosshair"></div>
       <div id="hint"></div>
+
       <div id="slots">
-        <div class="slot" data-slot="1"><b>1</b><span>сигарета</span><i id="cigs">19</i></div>
+        <div class="slot" data-slot="1"><b>1</b><span>сигарета</span><i>19</i></div>
+        <div class="slot" data-slot="2"><b>2</b><span>топор</span><i></i></div>
+        <div class="slot locked" data-slot="3"><b>3</b><span>дробовик</span><i></i></div>
+        <div class="slot locked" data-slot="4"><b>4</b><span>удочка</span><i></i></div>
+        <div class="slot locked" data-slot="5"><b>5</b><span>фонарик</span><i></i></div>
       </div>
+
       <div id="breath"><i></i></div>
     </div>
 
@@ -35,10 +49,10 @@
         <h1>Круглое озеро</h1>
         <p class="tagline">Лес, вода и одна сигарета до заката.</p>
         <ul class="controls">
-          <li><b>WASD</b> — идти</li>
-          <li><b>Shift</b> — бежать, пока хватает дыхания</li>
-          <li><b>мышь</b> — смотреть</li>
-          <li><b>1</b> — закурить, ещё раз — затянуться</li>
+          <li><b>WASD</b> — идти, <b>Shift</b> — бежать</li>
+          <li><b>мышь</b> — смотреть, <b>ЛКМ</b> — действие предметом</li>
+          <li><b>1–5</b> — сигарета, топор, дробовик, удочка, фонарик</li>
+          <li><b>E</b> — говорить, собирать, садиться</li>
           <li><b>Esc</b> — пауза</li>
         </ul>
         <button id="play">Играть</button>

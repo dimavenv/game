@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { CIGARETTE } from '../../shared/balance';
 import { clamp } from '../../shared/rng';
+import type { Inventory } from '../../shared/state';
 import type { GameAudio } from '../audio/audio';
 import type { Smoke } from '../render/smoke';
 
@@ -37,9 +38,10 @@ const PAPER_LEN = 0.05;
  */
 export class CigaretteItem {
   state: CigState = 'none';
-  pack: number;
   smokedToday = 0;
   buzz = 0;
+  /** Убрана в другую руку: горит, но не показывается. */
+  private hidden = false;
 
   private readonly group = new THREE.Group();
   private readonly paper: THREE.Mesh;
@@ -61,10 +63,8 @@ export class CigaretteItem {
     camera: THREE.PerspectiveCamera,
     private readonly smoke: Smoke,
     private readonly audio: GameAudio,
-    startPack: number,
+    private readonly inventory: Inventory,
   ) {
-    this.pack = startPack;
-
     const filter = new THREE.Mesh(
       new THREE.CylinderGeometry(0.0046, 0.0046, FILTER_LEN, 8),
       new THREE.MeshStandardMaterial({ color: 0xc8a86a, roughness: 0.9 }),
@@ -99,6 +99,7 @@ export class CigaretteItem {
     this.group.position.copy(POSE_HIDDEN.pos);
     this.group.rotation.copy(POSE_HIDDEN.rot);
     this.group.visible = false;
+
     // Модель в руке живёт в системе координат камеры и не отсекается фрустумом.
     this.group.traverse((o) => (o.frustumCulled = false));
     camera.add(this.group);
@@ -132,7 +133,7 @@ export class CigaretteItem {
 
   hint(): string {
     if (this.state === 'none') {
-      return this.pack > 0 ? '1 — закурить' : 'пачка пустая';
+      return this.inventory.cigarettes > 0 ? '1 — закурить' : 'пачка пустая';
     }
     if (this.state === 'lit') return '1 — затянуться';
     return '';
@@ -144,12 +145,12 @@ export class CigaretteItem {
 
   press(): void {
     if (this.state === 'none') {
-      if (this.pack <= 0) return;
-      this.pack -= 1;
+      if (this.inventory.cigarettes <= 0) return;
+      this.inventory.cigarettes -= 1;
       this.smokedToday += 1;
       this.burn = CIGARETTE.burnTime;
       this.setState('lighting');
-      this.group.visible = true;
+      this.syncVisibility();
       this.audio.lighter();
       this.flame.visible = true;
       this.light.visible = true;
@@ -165,6 +166,28 @@ export class CigaretteItem {
   private setState(state: CigState): void {
     this.state = state;
     this.timer = 0;
+    this.syncVisibility();
+  }
+
+  private syncVisibility(): void {
+    this.group.visible = !this.hidden && this.state !== 'none';
+  }
+
+  /** Переключились на другой предмет: сигарета догорает вне кадра. */
+  setHidden(hidden: boolean): void {
+    if (this.hidden === hidden) return;
+    this.hidden = hidden;
+    this.syncVisibility();
+  }
+
+  /** Оставить зажжённую сигарету в мире (дань уважения Пирату). */
+  giveAway(): boolean {
+    if (!this.burning) return false;
+    this.setState('none');
+    this.light.visible = false;
+    this.light.intensity = 0;
+    this.flame.visible = false;
+    return true;
   }
 
   private layout(fraction: number): void {
@@ -225,7 +248,6 @@ export class CigaretteItem {
       case 'flick':
         if (this.timer >= CIGARETTE.flickTime) {
           this.setState('none');
-          this.group.visible = false;
           this.light.visible = false;
         }
         break;

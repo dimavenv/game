@@ -128,3 +128,45 @@ export const FOREST = {
   /** Яблони (этап 2). */
   appleTrees: 15,
 } as const;
+
+/** Рубка деревьев (этап 2). */
+export const CHOP = {
+  hits: 5,
+  hitsGoodAxe: 3,
+  logsPerTree: 3,
+  regrowDays: 2,
+  /** На какой дистанции топор достаёт до ствола. */
+  range: 3.0,
+  swingTime: 0.55,
+} as const;
+
+/** Яблони. */
+export const APPLES = {
+  minPerTree: 3,
+  maxPerTree: 5,
+  regrowDays: 1,
+  range: 3.0,
+} as const;
+
+/** Рыбалка. */
+export const FISHING = {
+  minWait: 5,
+  maxWait: 25,
+  /** Сколько времени есть на подсечку — специально щедро. */
+  biteWindow: 2.5,
+  /** Промах не отпугивает надолго: следующая поклёвка придёт быстрее. */
+  retryFactor: 0.45,
+  castRange: 24,
+} as const;
+
+/** Печка в хижине. */
+export const STOVE = {
+  secondsPerLog: 75,
+  maxFuel: 600,
+} as const;
+
+/** Дистанции взаимодействия. */
+export const INTERACT = {
+  range: 3.2,
+  npcRange: 3.2,
+} as const;

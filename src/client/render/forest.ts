@@ -142,10 +142,21 @@ const SWAY_CHUNK = /* glsl */ `
   transformed.z += cos(swayPhase * 0.8) * swayAmount * 0.7;
 `;
 
+/** Высота кроны по типу дерева — нужна для падающего ствола при рубке. */
+export const TREE_HEIGHT = [6.3, 9.6, 7.0];
+
+interface TreeSlot {
+  mesh: THREE.InstancedMesh;
+  index: number;
+  matrix: THREE.Matrix4;
+}
+
 /** Лес: несколько InstancedMesh на весь мир, поэтому вызовов отрисовки единицы. */
 export class Forest {
   readonly group = new THREE.Group();
   private readonly time = { value: 0 };
+  /** Соответствие «индекс дерева в мире» → конкретный инстанс, чтобы его прятать. */
+  private readonly slots = new Map<number, TreeSlot>();
 
   constructor(world: WorldData) {
     const trees = [
@@ -155,17 +166,21 @@ export class Forest {
     ];
 
     for (const { type, geo } of trees) {
-      const list = world.trees.filter((t) => t.type === type);
+      const list: { tree: (typeof world.trees)[number]; id: number }[] = [];
+      world.trees.forEach((tree, id) => {
+        if (tree.type === type) list.push({ tree, id });
+      });
       const mesh = this.makeInstanced(geo, list.length, 0.9, 0.014, true);
       const m = new THREE.Matrix4();
       const color = new THREE.Color();
-      list.forEach((t, i) => {
+      list.forEach(({ tree: t, id }, i) => {
         m.compose(
           new THREE.Vector3(t.x, t.y, t.z),
           new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), t.rot),
           new THREE.Vector3(t.scale, t.scale * (0.9 + (t.rot % 0.3)), t.scale),
         );
         mesh.setMatrixAt(i, m);
+        this.slots.set(id, { mesh, index: i, matrix: m.clone() });
         // Небольшой разброс оттенка, чтобы лес не выглядел штампованным.
         const v = 0.86 + ((t.x * 13.7 + t.z * 7.3) % 1) * 0.28;
         mesh.setColorAt(i, color.setRGB(v * 0.98, v, v * 0.94));
@@ -264,6 +279,20 @@ export class Forest {
     mesh.instanceMatrix.needsUpdate = true;
     if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
     this.group.add(mesh);
+  }
+
+  /** Срубленное дерево прячем сжатием инстанса в точку, потом возвращаем. */
+  setTreeVisible(id: number, visible: boolean): void {
+    const slot = this.slots.get(id);
+    if (!slot) return;
+    if (visible) {
+      slot.mesh.setMatrixAt(slot.index, slot.matrix);
+    } else {
+      const hidden = new THREE.Matrix4().makeScale(0, 0, 0);
+      hidden.setPosition(slot.matrix.elements[12], slot.matrix.elements[13], slot.matrix.elements[14]);
+      slot.mesh.setMatrixAt(slot.index, hidden);
+    }
+    slot.mesh.instanceMatrix.needsUpdate = true;
   }
 
   update(dt: number): void {

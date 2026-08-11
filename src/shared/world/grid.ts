@@ -3,8 +3,10 @@ export interface Obstacle {
   x: number;
   z: number;
   radius: number;
-  /** Индекс в исходном массиве — пригодится, когда деревья начнут падать. */
+  /** Индекс дерева в WorldData.trees; -1 у всего остального. */
   id: number;
+  /** Срубленное дерево перестаёт мешать, пока не отрастёт. */
+  disabled?: boolean;
 }
 
 export class ObstacleGrid {

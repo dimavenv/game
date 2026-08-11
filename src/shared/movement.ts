@@ -74,6 +74,7 @@ function resolve(world: WorldData, x: number, z: number): [number, number] | nul
   let pz = z;
   const near = world.obstacles.query(px, pz, 2.5, scratch);
   for (const o of near) {
+    if (o.disabled) continue;
     const dx = px - o.x;
     const dz = pz - o.z;
     const min = o.radius + PLAYER.radius;
@@ -82,6 +83,18 @@ function resolve(world: WorldData, x: number, z: number): [number, number] | nul
       const d = Math.sqrt(d2) || 1e-4;
       px = o.x + (dx / d) * min;
       pz = o.z + (dz / d) * min;
+    }
+  }
+
+  // Стены и прилавки: выталкиваем по оси наименьшего проникновения.
+  for (const b of world.boxes) {
+    const dx = px - b.x;
+    const dz = pz - b.z;
+    const ox = b.hw + PLAYER.radius - Math.abs(dx);
+    const oz = b.hd + PLAYER.radius - Math.abs(dz);
+    if (ox > 0 && oz > 0) {
+      if (ox < oz) px = b.x + Math.sign(dx || 1) * (b.hw + PLAYER.radius);
+      else pz = b.z + Math.sign(dz || 1) * (b.hd + PLAYER.radius);
     }
   }
 

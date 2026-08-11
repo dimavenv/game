@@ -1,3 +1,7 @@
+import { FISH } from '../../shared/fishing';
+import type { Inventory } from '../../shared/state';
+import type { ActiveQuest } from '../../shared/quests';
+import { QUEST_TITLE, questText } from '../../shared/quests';
 import { PHASE_LABEL, clockLabel, phaseOf } from '../../shared/time';
 
 function el<T extends HTMLElement>(id: string): T {
@@ -13,13 +17,23 @@ export class Hud {
   private readonly time = el('time');
   private readonly phase = el('phase');
   private readonly hint = el('hint');
-  private readonly cigs = el('cigs');
-  private readonly slot = document.querySelector<HTMLElement>('.slot[data-slot="1"]')!;
+  private readonly money = el('money');
+  private readonly carry = el('carry');
+  private readonly quest = el('quest');
   private readonly breath = el('breath');
   private readonly breathFill = el<HTMLElement>('breath').querySelector('i')!;
   private readonly warm = el('warm');
   private readonly vignette = el('vignette');
+  private readonly slots = new Map<number, HTMLElement>();
   private currentHint = '';
+  private currentCarry = '';
+  private currentQuest = '';
+
+  constructor() {
+    for (const node of document.querySelectorAll<HTMLElement>('.slot')) {
+      this.slots.set(Number(node.dataset.slot), node);
+    }
+  }
 
   setVisible(visible: boolean): void {
     this.root.classList.toggle('hidden', !visible);
@@ -38,9 +52,46 @@ export class Hud {
     this.hint.classList.toggle('show', text.length > 0);
   }
 
-  setCigarettes(count: number, active: boolean): void {
-    this.cigs.textContent = String(count);
-    this.slot.classList.toggle('active', active);
+  /** Деньги и то, что игрок несёт: пустые строки не показываем. */
+  setPurse(inv: Inventory): void {
+    this.money.textContent = `${inv.money} ₪`;
+    const parts: string[] = [];
+    if (inv.apples > 0) parts.push(`яблоки ${inv.apples}`);
+    if (inv.logs > 0) parts.push(`дрова ${inv.logs}`);
+    if (inv.fish.length > 0) {
+      const bighead = inv.fish.filter((f) => f.kind === 'bighead').length;
+      parts.push(bighead > 0 ? `рыба ${inv.fish.length} (${FISH.bighead.name} ${bighead})` : `рыба ${inv.fish.length}`);
+    }
+    if (inv.bandages > 0) parts.push(`бинты ${inv.bandages}`);
+    if (inv.shells > 0) parts.push(`патроны ${inv.shells}`);
+    const text = parts.join(' · ');
+    if (text === this.currentCarry) return;
+    this.currentCarry = text;
+    this.carry.textContent = text;
+  }
+
+  setQuest(quest: ActiveQuest | null, progress: number): void {
+    const text = quest ? `${QUEST_TITLE[quest.kind]}|${questText(quest)}|${progress}/${quest.target}|${quest.reward}` : '';
+    if (text === this.currentQuest) return;
+    this.currentQuest = text;
+    this.quest.classList.toggle('hidden', !quest);
+    if (!quest) return;
+    this.quest.replaceChildren();
+    const title = document.createElement('b');
+    title.textContent = `${QUEST_TITLE[quest.kind]} · ${quest.reward} ₪`;
+    const body = document.createElement('span');
+    body.textContent = `${questText(quest)} — ${progress}/${quest.target}`;
+    this.quest.append(title, body);
+  }
+
+  /** Подсветка активного слота и блокировка непокупленного. */
+  setSlots(active: number, unlocked: Record<number, boolean>, counts: Record<number, string>): void {
+    for (const [index, node] of this.slots) {
+      node.classList.toggle('active', index === active);
+      node.classList.toggle('locked', unlocked[index] === false);
+      const counter = node.querySelector('i');
+      if (counter) counter.textContent = counts[index] ?? '';
+    }
   }
 
   setBreath(fraction: number): void {

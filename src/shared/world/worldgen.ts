@@ -1,6 +1,7 @@
 import { FOREST, WORLD } from '../balance';
 import { ValueNoise, lerp, mulberry32, smoothstep, toSeed } from '../rng';
-import { ObstacleGrid } from './grid';
+import { hutLayout, stallLayout, type BoxCollider, type HutLayout, type StallLayout } from './buildings';
+import { ObstacleGrid, type Obstacle } from './grid';
 import { Terrain } from './terrain';
 
 export const TreeType = { Spruce: 0, Pine: 1, Birch: 2 } as const;
@@ -30,7 +31,15 @@ export interface WorldData {
   bushes: PropInstance[];
   rocks: PropInstance[];
   grass: PropInstance[];
+  /** Яблони: по ним ходят за яблоками для Буравчика. */
+  appleTrees: PropInstance[];
+  monument: { x: number; z: number; y: number; rot: number };
+  hut: HutLayout;
+  stall: StallLayout;
+  boxes: BoxCollider[];
   obstacles: ObstacleGrid;
+  /** Препятствия-стволы по индексу дерева: срубленное отключается здесь. */
+  treeObstacles: Obstacle[];
   spawn: { x: number; z: number; yaw: number };
 }
 
@@ -48,6 +57,7 @@ function treeDensity(x: number, z: number, glades: ValueNoise): number {
   if (distToClearing(x, z) < WORLD.clearing.r) return 0;
   if (Math.hypot(x - WORLD.sign.x, z - WORLD.sign.z) < 4) return 0;
   if (Math.hypot(x - SPAWN.x, z - SPAWN.z) < 3) return 0;
+  if (Math.hypot(x - WORLD.monument.x, z - WORLD.monument.z) < 7) return 0;
 
   const edge = Math.max(Math.abs(x), Math.abs(z));
   // К границе мира лес сгущается в стену, через которую не пройти.
@@ -60,12 +70,39 @@ function treeDensity(x: number, z: number, glades: ValueNoise): number {
   return Math.min(base * variation, FOREST.thicketDensity);
 }
 
+/** Яблони раскиданы по лесу; вокруг каждой — прогалина, чтобы её было видно. */
+function placeAppleTrees(seed: number, terrain: Terrain): PropInstance[] {
+  const rng = mulberry32(seed ^ 0x7a1c93d5);
+  const out: PropInstance[] = [];
+  let guard = FOREST.appleTrees * 400;
+  while (out.length < FOREST.appleTrees && guard-- > 0) {
+    const x = (rng() * 2 - 1) * 165;
+    const z = (rng() * 2 - 1) * 165;
+    if (Terrain.lakeDistance(x, z) < WORLD.lakeHalf + 14) continue;
+    if (distToClearing(x, z) < WORLD.clearing.r + 8) continue;
+    if (terrain.surface(x, z) !== 'grass') continue;
+    if (terrain.slope(x, z) > 0.35) continue;
+    if (out.some((a) => Math.hypot(a.x - x, a.z - z) < 45)) continue;
+    out.push({
+      x,
+      z,
+      y: terrain.height(x, z),
+      rot: rng() * Math.PI * 2,
+      scale: 0.9 + rng() * 0.25,
+      variant: Math.floor(rng() * 3),
+    });
+  }
+  return out;
+}
+
 export function generateWorld(seedInput: string | number): WorldData {
   const seed = toSeed(seedInput);
   const terrain = new Terrain(seed);
   const glades = new ValueNoise(seed ^ 0x51ed270b);
+  const appleTrees = placeAppleTrees(seed, terrain);
 
   const trees: TreeInstance[] = [];
+  const treeObstacles: Obstacle[] = [];
   const obstacles = new ObstacleGrid(6);
 
   const cell = FOREST.cell;
@@ -80,6 +117,8 @@ export function generateWorld(seedInput: string | number): WorldData {
       if (Math.abs(x) > WORLD.bound || Math.abs(z) > WORLD.bound) continue;
       if (rng() > treeDensity(x, z, glades)) continue;
       if (terrain.slope(x, z) > 0.5) continue;
+      // Вокруг яблони держим прогалину, иначе её не разглядеть в чаще.
+      if (appleTrees.some((a) => Math.hypot(a.x - x, a.z - z) < 6)) continue;
 
       const r = rng();
       const type = r < 0.5 ? TreeType.Spruce : r < 0.82 ? TreeType.Pine : TreeType.Birch;
@@ -92,7 +131,9 @@ export function generateWorld(seedInput: string | number): WorldData {
         scale,
         type,
       };
-      obstacles.add({ x, z, radius: FOREST.trunkRadius * scale, id: trees.length });
+      const obstacle: Obstacle = { x, z, radius: FOREST.trunkRadius * scale, id: trees.length };
+      obstacles.add(obstacle);
+      treeObstacles.push(obstacle);
       trees.push(tree);
     }
   }
@@ -121,6 +162,14 @@ export function generateWorld(seedInput: string | number): WorldData {
     return out;
   };
 
+  for (const a of appleTrees) {
+    obstacles.add({ x: a.x, z: a.z, radius: 0.42 * a.scale, id: -1 });
+  }
+  obstacles.add({ x: WORLD.monument.x, z: WORLD.monument.z, radius: 0.7, id: -1 });
+
+  const hut = hutLayout(terrain);
+  const stall = stallLayout(terrain);
+
   return {
     seed,
     terrain,
@@ -128,7 +177,18 @@ export function generateWorld(seedInput: string | number): WorldData {
     bushes: scatter(FOREST.bushes, false, 3),
     rocks: scatter(FOREST.rocks, true, 0.5),
     grass: scatter(FOREST.grassTufts, false, 1.5),
+    appleTrees,
+    monument: {
+      x: WORLD.monument.x,
+      z: WORLD.monument.z,
+      y: terrain.height(WORLD.monument.x, WORLD.monument.z),
+      rot: 0.35,
+    },
+    hut,
+    stall,
+    boxes: [...hut.colliders, ...stall.colliders],
     obstacles,
+    treeObstacles,
     spawn: { ...SPAWN },
   };
 }
