@@ -1,4 +1,5 @@
-import { ECONOMY } from '../shared/balance';
+import { AVI, ECONOMY } from '../shared/balance';
+import { nightJobProgress, nightJobText, rollNightJob, type NightJob } from '../shared/avi';
 import { FISH_ITEMS, fishKindOfItem, fishLabel, fishPrice } from '../shared/fishing';
 import { addItem, countItem, hasRoomFor, itemStacks, removeItem } from '../shared/inventory';
 import { ITEMS, type ItemId } from '../shared/items';
@@ -247,4 +248,118 @@ export function tomerAction(id: string, state: GameState): DialogResult {
 
   if (id === 'leave') return { close: true };
   return {};
+}
+
+
+/* --- Ави Загур: ночной чёрный рынок --- */
+
+const AVI_SHOP: ShopEntry[] = [
+  { id: 'avi-shells', label: 'Патроны, 5 шт.', price: AVI.prices.shells5, item: { id: 'shells', count: 5 } },
+  { id: 'avi-bandage', label: 'Бинт', price: AVI.prices.bandage, item: { id: 'bandage', count: 1 } },
+  { id: 'avi-stash', label: 'Пакетик', price: AVI.prices.stash, item: { id: 'stash', count: 1 } },
+];
+
+const WINES: ItemId[] = ['wine_young', 'wine_aged', 'wine_vintage'];
+
+/** Ави платит за вино втрое против брата — ради этого его и ищут. */
+export function aviWineValue(state: GameState): number {
+  return WINES.reduce((sum, id) => sum + countItem(state.inventory, id) * ITEMS[id].sell * AVI.wineMultiplier, 0);
+}
+
+export function aviDialog(state: GameState, day: number): DialogSpec {
+  const inv = state.inventory;
+  const actions = AVI_SHOP.map((entry) => ({
+    id: entry.id,
+    label: entry.label,
+    note: `${entry.price} ₪`,
+    disabled: inv.money < entry.price,
+  }));
+
+  const wineCount = WINES.reduce((n, id) => n + countItem(inv, id), 0);
+  if (wineCount > 0) {
+    actions.push({
+      id: 'avi-sell-wine',
+      label: `Сдать вино (${wineCount})`,
+      note: `+${aviWineValue(state)} ₪`,
+      disabled: false,
+    });
+  }
+
+  const job = state.nightJob;
+  if (job && job.day === day) {
+    const progress = nightJobProgress(job, inv);
+    actions.push({
+      id: 'avi-job-done',
+      label: progress >= job.target ? 'Сдать поручение' : nightJobText(job),
+      note: progress >= job.target ? `+${job.reward} ₪` : `${progress}/${job.target}`,
+      disabled: progress < job.target,
+    });
+  } else {
+    actions.push({ id: 'avi-job', label: 'Спросить про работу на ночь', note: '', disabled: false });
+  }
+
+  actions.push({ id: 'leave', label: 'Отойти', note: '', disabled: false });
+
+  return {
+    title: 'Ави Загур',
+    speech:
+      wineCount > 0
+        ? 'О, вино. Брат в этом не разбирается, а я разбираюсь.'
+        : 'Тише. Ты меня не видел, я тебя не видел. Что нужно?',
+    actions,
+    footer: `В кармане ${inv.money} ₪`,
+  };
+}
+
+export function aviAction(
+  id: string,
+  state: GameState,
+  day: number,
+  rng: () => number,
+): DialogResult & { job?: NightJob } {
+  const inv = state.inventory;
+  const entry = AVI_SHOP.find((e) => e.id === id);
+  if (entry) {
+    if (inv.money < entry.price) return { toast: 'Не хватает шекелей', tone: 'bad' };
+    if (entry.item && !hasRoomFor(inv, entry.item.id, entry.item.count)) {
+      return { toast: 'В рюкзаке нет места', tone: 'bad' };
+    }
+    inv.money -= entry.price;
+    if (entry.item) addItem(inv, entry.item.id, entry.item.count);
+    return { toast: `${entry.label} — ${entry.price} ₪`, tone: 'money', sound: 'coins', voice: 'avi_deal' };
+  }
+
+  switch (id) {
+    case 'avi-sell-wine': {
+      const sum = aviWineValue(state);
+      for (const wine of WINES) removeItem(inv, wine, countItem(inv, wine));
+      inv.money += sum;
+      return { toast: `Вино ушло за ${sum} ₪`, tone: 'money', sound: 'coins', voice: 'avi_deal' };
+    }
+    case 'avi-job': {
+      const job = rollNightJob(rng, day);
+      state.nightJob = job;
+      return { toast: `На ночь: ${nightJobText(job)}`, sound: 'pickup', voice: 'avi_job' };
+    }
+    case 'avi-job-done': {
+      const job = state.nightJob;
+      if (!job || nightJobProgress(job, inv) < job.target) return {};
+      if (job.kind === 'wine') {
+        let left = job.target;
+        for (const wine of WINES) {
+          const take = Math.min(left, countItem(inv, wine));
+          removeItem(inv, wine, take);
+          left -= take;
+          if (left <= 0) break;
+        }
+      }
+      inv.money += job.reward;
+      state.nightJob = null;
+      return { toast: `Ави расплатился: ${job.reward} ₪`, tone: 'money', sound: 'coins' };
+    }
+    case 'leave':
+      return { close: true };
+    default:
+      return {};
+  }
 }

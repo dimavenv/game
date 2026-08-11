@@ -262,3 +262,19 @@ export const WINE = {
   ageVintage: 7,
   range: 3.0,
 } as const;
+
+/** Ави Загур: ночной чёрный рынок (этап 6). */
+export const AVI = {
+  /** Во сколько раз дороже брата он берёт вино. */
+  wineMultiplier: 3,
+  prices: { shells5: 40, bandage: 30, stash: 120 },
+  /** Слышно его музыку с этого расстояния. */
+  hearRange: 34,
+  /** Эффект пакетика: секунды и множители. */
+  stashDuration: 60,
+  stashSpeed: 1.25,
+  stashDamage: 1.5,
+  /** Отходняк до утра: во сколько раз короче дыхание. */
+  hangoverBreath: 0.5,
+  hangoverSway: 0.9,
+} as const;

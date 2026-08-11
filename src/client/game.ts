@@ -3,6 +3,7 @@ import {
   APPLES,
   CHOP,
   ECONOMY,
+  AVI,
   STONES,
   WINE,
   FISHING,
@@ -18,6 +19,8 @@ import {
 } from '../shared/balance';
 import { fishItemId, fishLabel, rollFish } from '../shared/fishing';
 import { GRADE_LABEL, daysToNextGrade, wineGrade, wineItem } from '../shared/wine';
+import { aviSpot, nightJobText, type AviSpot } from '../shared/avi';
+import type { ItemId } from '../shared/items';
 import {
   BLUEPRINTS,
   CHEST_SLOTS,
@@ -52,7 +55,7 @@ import { campfirePosition } from '../shared/world/buildings';
 import { Terrain } from '../shared/world/terrain';
 import { generateWorld, type WorldData } from '../shared/world/worldgen';
 import { GameAudio } from './audio/audio';
-import { buravchikAction, buravchikDialog, tomerAction, tomerDialog } from './dialogs';
+import { aviAction, aviDialog, buravchikAction, buravchikDialog, tomerAction, tomerDialog } from './dialogs';
 import { Input } from './input';
 import { AxeItem } from './items/axe';
 import { HammerItem } from './items/hammer';
@@ -60,7 +63,7 @@ import { CigaretteItem } from './items/cigarette';
 import { RodItem } from './items/rod';
 import { ShotgunItem } from './items/shotgun';
 import { clearSave, loadGame, saveGame } from './save';
-import { Interactions, type Target } from './interaction';
+import { Interactions, type InteractionPoints, type Target } from './interaction';
 import { createNpc, type NpcHandle } from './render/characters';
 import { Forest, TREE_HEIGHT } from './render/forest';
 import { buildAppleTree, buildMonument, ChopEffects, type AppleTreeHandle } from './render/nature';
@@ -116,7 +119,9 @@ export class Game {
   private readonly campfire: CampfireBuild;
   private readonly chopEffects = new ChopEffects();
   private readonly appleTrees: AppleTreeHandle[] = [];
-  private readonly npcs: { buravchik: NpcHandle; tomer: NpcHandle };
+  private readonly npcs: { buravchik: NpcHandle; tomer: NpcHandle; avi: NpcHandle };
+  private readonly aviLantern: THREE.PointLight;
+  private aviHere: AviSpot | null = null;
   private readonly flashlight: THREE.SpotLight;
 
   private readonly cigarette: CigaretteItem;
@@ -142,6 +147,8 @@ export class Game {
   private readonly clock = createClock();
   private readonly state: GameState;
   private readonly interactions: Interactions;
+  /** Ссылка на точки взаимодействия: у Ави она меняется каждую ночь. */
+  private readonly interactionPoints: InteractionPoints;
   private readonly rng = mulberry32(Date.now() >>> 0);
 
   private accumulator = 0;
@@ -233,8 +240,15 @@ export class Game {
         this.world.stall.keeper.z,
         Math.PI,
       ),
+      avi: createNpc('avi', 0, -999, 0, 0),
     };
-    this.scene.add(this.npcs.buravchik.group, this.npcs.tomer.group);
+    this.npcs.avi.group.visible = false;
+    this.scene.add(this.npcs.buravchik.group, this.npcs.tomer.group, this.npcs.avi.group);
+
+    // Фонарь Ави: единственный огонёк в лесу ночью.
+    this.aviLantern = new THREE.PointLight(0xffc46a, 0, 18, 2);
+    this.aviLantern.visible = false;
+    this.scene.add(this.aviLantern);
 
     this.smoke = new Smoke();
     this.scene.add(this.smoke.points);
@@ -259,7 +273,7 @@ export class Game {
     this.camera.add(this.flashlight, this.flashlight.target);
 
     const seat = this.world.hut.chairs[1];
-    this.interactions = new Interactions(this.world, {
+    this.interactionPoints = {
       buravchik: this.npcs.buravchik.labelPoint,
       tomer: this.npcs.tomer.labelPoint,
       monument: monument.position,
@@ -268,7 +282,11 @@ export class Game {
       appleTrees: this.appleTrees.map((t) => t.position),
       pebbles: this.world.pebbles.map((p) => new THREE.Vector3(p.x, p.y, p.z)),
       vines: this.wildVines.map((v) => v.position),
-    });
+      avi: null,
+    };
+    this.interactions = new Interactions(this.world, this.interactionPoints);
+
+    this.inventoryScreen.setUseHandler((id) => this.consumeItem(id));
 
     this.input = new Input(canvas);
     this.input.onLockChange = (locked) => {
@@ -348,7 +366,8 @@ export class Game {
       this.cigarette.smokedToday * PLAYER.breathPenaltyPerCig,
       PLAYER.breathPenaltyCap,
     );
-    return PLAYER.breathMax * (1 - penalty);
+    const hangover = this.clock.day <= this.state.effects.hangoverUntilDay ? AVI.hangoverBreath : 1;
+    return PLAYER.breathMax * (1 - penalty) * hangover;
   }
 
   private frame(now: number): void {
@@ -406,8 +425,9 @@ export class Game {
             sprint,
             jump: this.input.isDown('Space'),
             overloaded: isOverloaded(this.state.inventory),
+            noBreathDrain: this.state.effects.stash > 0,
             dt: FIXED_DT,
-            slowFactor: this.cigarette.speedMul,
+            slowFactor: this.cigarette.speedMul * (this.state.effects.stash > 0 ? AVI.stashSpeed : 1),
             breathMax,
           },
           this.world,
@@ -434,6 +454,12 @@ export class Game {
     if (this.seated && this.state.world.stoveFuel > 0 && this.player.health < PLAYER.maxHealth) {
       this.player.health = Math.min(PLAYER.maxHealth, this.player.health + HEALTH.stoveRegen * dt * scale);
     }
+
+    if (this.state.effects.stash > 0) {
+      this.state.effects.stash = Math.max(0, this.state.effects.stash - dt);
+      if (this.state.effects.stash === 0) this.toasts.push('Отпустило. Дыхания почти нет', 'bad');
+    }
+    this.updateAviAudio();
 
     this.saveTimer -= dt;
     if (this.saveTimer <= 0) {
@@ -538,7 +564,8 @@ export class Game {
 
   /** Топор бьёт в середине замаха: сперва проверяем зомби, потом ствол. */
   private applyAxeHit(): void {
-    const damage = this.state.inventory.hasGoodAxe ? WEAPONS.axe.goodDamage : WEAPONS.axe.damage;
+    const base = this.state.inventory.hasGoodAxe ? WEAPONS.axe.goodDamage : WEAPONS.axe.damage;
+    const damage = base * (this.state.effects.stash > 0 ? AVI.stashDamage : 1);
     const victim = findMeleeTarget(this.zombies, this.player, WEAPONS.axe.range, WEAPONS.axe.arc);
     if (victim) {
       if (damageZombie(victim, damage)) this.onZombieKilled();
@@ -621,6 +648,9 @@ export class Game {
         break;
       case 'tomer':
         this.openTomer();
+        break;
+      case 'avi':
+        this.openAvi();
         break;
       case 'apple':
         this.pickApples(target.index);
@@ -914,6 +944,7 @@ export class Game {
     this.wasDark = dark;
 
     if (dark) {
+      this.spawnAvi();
       const count = zombieCount(this.clock.day);
       this.zombies = spawnZombies(this.rng, this.world, count, this.player, this.nextZombieId);
       this.nextZombieId += count;
@@ -922,6 +953,11 @@ export class Game {
     } else {
       this.zombies = [];
       this.zombieView.sync(this.zombies);
+      this.despawnAvi();
+      if (this.state.nightJob) {
+        this.toasts.push('Поручение Ави сгорело с рассветом', 'bad');
+        this.state.nightJob = null;
+      }
       this.toasts.push('Рассвело. Лес пуст');
     }
   }
@@ -995,6 +1031,11 @@ export class Game {
 
   private onZombieKilled(): void {
     this.audio.zombieDown();
+    const job = this.state.nightJob;
+    if (job?.kind === 'zombies' && job.day === this.clock.day) {
+      job.progress += 1;
+      if (job.progress === job.target) this.toasts.push(`Ави ждёт: ${nightJobText(job)} — готово`);
+    }
     const quest = this.state.quest;
     if (quest?.kind === 'zombies') {
       quest.progress += 1;
@@ -1382,6 +1423,73 @@ export class Game {
     this.wildVines.forEach((vine, index) => {
       vine.setGrapes(vineReady(this.state, index, day, WINE.vineRegrowDays));
     });
+  }
+
+
+  /** Ночью Ави стоит в новом месте — точка зависит только от номера дня. */
+  private spawnAvi(): void {
+    const spot = aviSpot(this.clock.day, this.world.seed, this.world.terrain);
+    this.aviHere = spot;
+    this.npcs.avi.group.position.set(spot.x, spot.y, spot.z);
+    this.npcs.avi.group.rotation.y = spot.yaw;
+    this.npcs.avi.group.visible = true;
+    this.npcs.avi.labelPoint.set(spot.x, spot.y + 1.62, spot.z);
+    this.aviLantern.position.set(spot.x + 0.6, spot.y + 0.9, spot.z + 0.3);
+    this.aviLantern.visible = true;
+    this.aviLantern.intensity = 5;
+    this.interactionPoints.avi = new THREE.Vector3(spot.x, spot.y + 1.4, spot.z);
+  }
+
+  private despawnAvi(): void {
+    this.aviHere = null;
+    this.npcs.avi.group.visible = false;
+    this.aviLantern.visible = false;
+    this.aviLantern.intensity = 0;
+    this.interactionPoints.avi = null;
+    this.audio.setAviMusic(0);
+  }
+
+  /** Музыка из его колонки: громкость по расстоянию — так его и находят. */
+  private updateAviAudio(): void {
+    if (!this.aviHere) return;
+    const d = Math.hypot(this.aviHere.x - this.player.x, this.aviHere.z - this.player.z);
+    const volume = 1 - smoothstep(4, AVI.hearRange, d);
+    this.audio.setAviMusic(volume * volume);
+  }
+
+  private openAvi(): void {
+    this.audio.playSlot('avi_greet');
+    const day = this.clock.day;
+    const spec = (): DialogSpec => aviDialog(this.state, day);
+    this.openDialog(spec, (id) => {
+      const result = aviAction(id, this.state, day, this.rng);
+      this.applyDialogResult(result);
+      return result.close === true;
+    });
+  }
+
+  /** Правая кнопка в рюкзаке: съесть, перевязаться или занюхать. */
+  private consumeItem(id: ItemId): void {
+    const inv = this.state.inventory;
+    if (id === 'bandage') {
+      this.useBandage();
+      return;
+    }
+    if (id === 'apple') {
+      if (removeItem(inv, 'apple', 1) <= 0) return;
+      this.player.health = Math.min(PLAYER.maxHealth, this.player.health + 6);
+      this.toasts.push('Съел яблоко');
+      return;
+    }
+    if (id === 'stash') {
+      if (removeItem(inv, 'stash', 1) <= 0) return;
+      this.state.effects.stash = AVI.stashDuration;
+      this.state.effects.hangoverUntilDay = this.clock.day;
+      this.audio.breath(true);
+      this.toasts.push('Понесло. До утра будет плохо', 'bad');
+      return;
+    }
+    this.toasts.push('Это не едят', 'bad');
   }
 
   private updateHud(): void {

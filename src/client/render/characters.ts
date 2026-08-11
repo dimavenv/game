@@ -117,16 +117,21 @@ export interface NpcHandle {
 }
 
 export function createNpc(
-  name: 'buravchik' | 'tomer',
+  name: 'buravchik' | 'tomer' | 'avi',
   x: number,
   y: number,
   z: number,
   rotation: number,
 ): NpcHandle {
-  const built =
-    name === 'buravchik'
-      ? buildHuman({ skin: 0xc79a72, clothes: 0x3f4a33, trousers: 0x2f3a44, hat: 0x4a4436 }, 'sitting')
-      : buildHuman({ skin: 0xb98553, clothes: 0xc9c0a4, trousers: 0x59544a }, 'standing');
+  let built;
+  if (name === 'buravchik') {
+    built = buildHuman({ skin: 0xc79a72, clothes: 0x3f4a33, trousers: 0x2f3a44, hat: 0x4a4436 }, 'sitting');
+  } else if (name === 'avi') {
+    // Тот же типаж, что у брата, но в тёмном и в капюшоне.
+    built = buildHuman({ skin: 0xb98553, clothes: 0x2b2f36, trousers: 0x24272c, hat: 0x1f2226 }, 'standing');
+  } else {
+    built = buildHuman({ skin: 0xb98553, clothes: 0xc9c0a4, trousers: 0x59544a }, 'standing');
+  }
 
   built.group.position.set(x, y, z);
   built.group.rotation.y = rotation;

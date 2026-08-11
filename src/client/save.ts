@@ -1,4 +1,5 @@
 import type { PlayerState } from '../shared/movement';
+import type { NightJob } from '../shared/avi';
 import type { ActiveQuest } from '../shared/quests';
 import type { Inventory } from '../shared/inventory';
 import type { PlacedStructure } from '../shared/world/building';
@@ -6,13 +7,15 @@ import type { GameState, BoulderState, TreeMutation } from '../shared/state';
 import type { WorldClock } from '../shared/time';
 
 const KEY = 'krugloe-ozero-save';
-const VERSION = 3;
+const VERSION = 4;
 
 interface SaveData {
   version: number;
   inventory: Inventory;
   quest: ActiveQuest | null;
   questsDone: number;
+  nightJob: NightJob | null;
+  hangoverUntilDay: number;
   clock: WorldClock;
   trees: [number, TreeMutation][];
   appleTrees: (number | null)[];
@@ -38,6 +41,8 @@ export function saveGame(state: GameState, clock: WorldClock, player: PlayerStat
     inventory: state.inventory,
     quest: state.quest,
     questsDone: state.questsDone,
+    nightJob: state.nightJob,
+    hangoverUntilDay: state.effects.hangoverUntilDay,
     clock: { t: clock.t, day: clock.day },
     trees: [...state.world.trees.entries()],
     appleTrees: state.world.appleTrees.map((a) => a.pickedDay),
@@ -73,6 +78,9 @@ export function loadGame(state: GameState, clock: WorldClock, player: PlayerStat
   Object.assign(state.inventory, data.inventory);
   state.quest = data.quest;
   state.questsDone = data.questsDone ?? 0;
+  state.nightJob = data.nightJob ?? null;
+  state.effects.hangoverUntilDay = data.hangoverUntilDay ?? -99;
+  state.effects.stash = 0;
   clock.t = data.clock.t;
   clock.day = data.clock.day;
 

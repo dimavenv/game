@@ -42,6 +42,8 @@ export interface MoveInput {
   jump: boolean;
   /** Рюкзак набит: бег запрещён, шаг короче. */
   overloaded: boolean;
+  /** Под приходом дыхание не сбивается. */
+  noBreathDrain: boolean;
   dt: number;
   /** Множитель скорости от внешних эффектов (затяжка). */
   slowFactor: number;
@@ -140,7 +142,7 @@ export function stepPlayer(state: PlayerState, input: MoveInput, world: WorldDat
   state.sprinting = canSprint;
 
   if (canSprint) {
-    state.breath -= dt;
+    if (!input.noBreathDrain) state.breath -= dt;
     state.restTimer = 0;
     if (state.breath <= 0) {
       state.breath = 0;

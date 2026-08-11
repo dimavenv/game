@@ -1,5 +1,5 @@
 import { CARRY_LIMIT, moveStack, stackWeight, totalWeight, type Inventory, type ItemStack } from '../../shared/inventory';
-import { ITEMS } from '../../shared/items';
+import { ITEMS, type ItemId } from '../../shared/items';
 
 /**
  * Рюкзак: сетка ячеек, вес и перекладывание мышью. Слева — то, что на игроке,
@@ -18,6 +18,7 @@ export class InventoryScreen {
   /** Что сейчас «в руке» у курсора: сторона и номер ячейки. */
   private held: { side: 'bag' | 'chest'; index: number } | null = null;
   private closeHandler: (() => void) | null = null;
+  private useHandler: ((id: ItemId) => void) | null = null;
 
   constructor() {
     this.root = document.createElement('div');
@@ -35,7 +36,7 @@ export class InventoryScreen {
           <div class="inv-grid" data-side="chest"></div>
         </div>
       </div>
-      <div class="inv-help">Клик — взять стопку, клик по ячейке — положить. Tab или Esc — закрыть.</div>`;
+      <div class="inv-help">Клик — взять стопку, клик по ячейке — положить. Правая кнопка — использовать. Tab или Esc — закрыть.</div>`;
     document.body.appendChild(this.root);
 
     this.leftGrid = this.root.querySelector('.inv-grid[data-side="bag"]')!;
@@ -47,6 +48,11 @@ export class InventoryScreen {
 
   get isOpen(): boolean {
     return !this.root.classList.contains('hidden');
+  }
+
+  /** Что делать по правой кнопке: съесть, перевязаться, занюхать. */
+  setUseHandler(handler: (id: ItemId) => void): void {
+    this.useHandler = handler;
   }
 
   open(inventory: Inventory, onClose: () => void, chest?: { title: string; slots: (ItemStack | null)[] }): void {
@@ -137,6 +143,12 @@ export class InventoryScreen {
         }
       }
       cell.addEventListener('click', () => this.click(side, index));
+      cell.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        if (side !== 'bag' || !stack) return;
+        this.useHandler?.(stack.id);
+        this.render();
+      });
       grid.appendChild(cell);
     });
   }

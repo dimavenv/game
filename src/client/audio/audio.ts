@@ -18,6 +18,9 @@ export class GameAudio {
 
   private cricketTimer = 0;
   private started = false;
+  private aviVolume = 0;
+  private musicTimer = 0;
+  private musicStep = 0;
   private slots: SoundSlots | null = null;
 
   get ready(): boolean {
@@ -319,6 +322,25 @@ export class GameAudio {
     }
   }
 
+  /**
+   * Тихая музыка из колонки Ави. Громкость задаётся расстоянием, поэтому
+   * ночью его можно найти на слух.
+   */
+  setAviMusic(volume: number): void {
+    this.aviVolume = volume;
+  }
+
+  private musicNote(): void {
+    // Ленивая пентатоника: пара нот, которые не приедаются за ночь.
+    const scale = [196, 233, 261, 293, 349, 392];
+    const note = scale[[0, 2, 4, 2, 5, 3, 1, 2][this.musicStep % 8]];
+    this.musicStep += 1;
+    this.blip(note, 0.35, 0.05 * this.aviVolume, 'triangle', (Math.random() - 0.5) * 0.4);
+    if (this.musicStep % 4 === 0) {
+      this.burst({ duration: 0.16, gain: 0.06 * this.aviVolume, type: 'lowpass', freq: 240, freqTo: 70, q: 0.8 });
+    }
+  }
+
   /** Плавное приглушение мира на затяжке. */
   setMuffle(amount: number): void {
     if (!this.ctx) return;
@@ -336,6 +358,14 @@ export class GameAudio {
     this.windGain.gain.setTargetAtTime(0.1 + info.windTarget * 0.22, t, 0.8);
     this.leavesGain.gain.setTargetAtTime(0.02 + info.canopy * 0.09, t, 0.8);
     this.waterGain.gain.setTargetAtTime(info.waterCloseness * 0.16, t, 0.5);
+
+    if (this.aviVolume > 0.002) {
+      this.musicTimer -= dt;
+      if (this.musicTimer <= 0) {
+        this.musicTimer = 0.34;
+        this.musicNote();
+      }
+    }
 
     if (info.night) {
       this.cricketTimer -= dt;

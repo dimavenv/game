@@ -17,6 +17,7 @@ import type { WorldData } from '../shared/world/worldgen';
 export type TargetKind =
   | 'buravchik'
   | 'tomer'
+  | 'avi'
   | 'apple'
   | 'monument'
   | 'stove'
@@ -42,6 +43,8 @@ export interface InteractionPoints {
   buravchik: THREE.Vector3;
   tomer: THREE.Vector3;
   monument: THREE.Vector3;
+  /** Ави появляется только ночью, днём здесь null. */
+  avi: THREE.Vector3 | null;
   stove: THREE.Vector3;
   chair: THREE.Vector3;
   appleTrees: THREE.Vector3[];
@@ -116,6 +119,21 @@ export class Interactions {
         distance: tomer,
         priority: 3,
       });
+    }
+
+    if (this.points.avi) {
+      const avi = near(this.points.avi, INTERACT.npcRange, 0.3);
+      if (avi !== null) {
+        consider({
+          kind: 'avi',
+          index: -1,
+          name: 'Ави Загур',
+          labelPoint: this.points.avi,
+          hint: 'E — говорить',
+          distance: avi,
+          priority: 3,
+        });
+      }
     }
 
     const mon = near(this.points.monument, INTERACT.range, 0.3);
