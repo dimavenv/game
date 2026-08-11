@@ -13,6 +13,8 @@ export interface DialogResult {
   close?: boolean;
   /** Игрок дал прикурить — сигарету надо списать. */
   spentCigarette?: boolean;
+  /** Слот записанной озвучки (см. SOUNDS.md). Нет файла — тишина. */
+  voice?: string;
 }
 
 const BURAVCHIK_GREETING = [
@@ -58,17 +60,23 @@ export function buravchikDialog(state: GameState, day: number, canLightUp: boole
   };
 }
 
-export function buravchikAction(id: string, state: GameState, day: number, rng: () => number): DialogResult {
+export function buravchikAction(
+  id: string,
+  state: GameState,
+  day: number,
+  rng: () => number,
+  allowZombies: boolean,
+): DialogResult {
   switch (id) {
     case 'take-quest': {
-      // Зомби появятся на этапе 3 — пока задания только мирные.
-      state.quest = rollQuest(rng, false);
-      return { toast: `Задание: ${questText(state.quest)}`, sound: 'pickup' };
+      // Зачистку Буравчик предлагает только тем, кто уже пережил первую ночь.
+      state.quest = rollQuest(rng, allowZombies);
+      return { toast: `Задание: ${questText(state.quest)}`, sound: 'pickup', voice: 'buravchik_quest' };
     }
     case 'hand-in': {
       if (!state.quest || !questReady(state.quest, state)) return {};
       const reward = completeQuest(state.quest, state);
-      return { toast: `Буравчик отсчитал ${reward} ₪`, tone: 'money', sound: 'coins' };
+      return { toast: `Буравчик отсчитал ${reward} ₪`, tone: 'money', sound: 'coins', voice: 'buravchik_done' };
     }
     case 'light-up': {
       state.world.lightUpDay = day;
@@ -78,6 +86,7 @@ export function buravchikAction(id: string, state: GameState, day: number, rng: 
         tone: 'money',
         sound: 'coins',
         spentCigarette: true,
+        voice: 'buravchik_light',
       };
     }
     case 'leave':
@@ -169,7 +178,7 @@ export function tomerAction(id: string, state: GameState): DialogResult {
   const inv = state.inventory;
   const entry = SHOP.find((e) => e.id === id);
   if (entry) {
-    if (inv.money < entry.price) return { toast: 'Не хватает шекелей', tone: 'bad' };
+    if (inv.money < entry.price) return { toast: 'Не хватает шекелей', tone: 'bad', voice: 'tomer_poor' };
     inv.money -= entry.price;
     switch (id) {
       case 'buy-cigarettes':
@@ -196,7 +205,7 @@ export function tomerAction(id: string, state: GameState): DialogResult {
       default:
         break;
     }
-    return { toast: `${entry.label} — ${entry.price} ₪`, tone: 'money', sound: 'coins' };
+    return { toast: `${entry.label} — ${entry.price} ₪`, tone: 'money', sound: 'coins', voice: 'tomer_buy' };
   }
 
   switch (id) {
@@ -209,6 +218,7 @@ export function tomerAction(id: string, state: GameState): DialogResult {
         toast: best ? `Улов продан за ${sum} ₪ (лучший — ${fishLabel(best)})` : `Улов продан за ${sum} ₪`,
         tone: 'money',
         sound: 'coins',
+        voice: 'tomer_sell',
       };
     }
     case 'sell-apples': {

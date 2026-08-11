@@ -24,6 +24,9 @@ export class Hud {
   private readonly breathFill = el<HTMLElement>('breath').querySelector('i')!;
   private readonly warm = el('warm');
   private readonly vignette = el('vignette');
+  private readonly damage = el('damage');
+  private readonly fade = el('fade');
+  private readonly health = el('health');
   private readonly slots = new Map<number, HTMLElement>();
   private currentHint = '';
   private currentCarry = '';
@@ -98,6 +101,19 @@ export class Hud {
     const show = fraction < 0.995;
     this.breath.classList.toggle('show', show);
     this.breathFill.style.transform = `scaleX(${Math.max(fraction, 0)})`;
+  }
+
+  /** Здоровье: краснеющая рамка вместо полоски, и чёрный экран при смерти. */
+  setHealth(fraction: number, hurtFlash: number, dying: boolean): void {
+    const hurt = Math.max(0, 1 - fraction);
+    this.damage.style.opacity = Math.min(1, hurt * 0.75 + hurtFlash * 0.6).toFixed(3);
+    this.fade.style.opacity = dying ? '1' : '0';
+    if (fraction < 0.999) {
+      this.health.textContent = `здоровье ${Math.round(fraction * 100)}%`;
+      this.health.classList.remove('hidden');
+    } else {
+      this.health.classList.add('hidden');
+    }
   }
 
   /** Тёплая волна и подсевшая по краям картинка сразу после затяжки. */

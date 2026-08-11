@@ -1,4 +1,5 @@
 import type { Surface } from '../../shared/world/terrain';
+import { SoundSlots } from './slots';
 
 /**
  * Весь звук синтезируется на месте: ни одного файла, ни одного запроса в сеть.
@@ -17,6 +18,7 @@ export class GameAudio {
 
   private cricketTimer = 0;
   private started = false;
+  private slots: SoundSlots | null = null;
 
   get ready(): boolean {
     return this.started;
@@ -55,8 +57,17 @@ export class GameAudio {
     lfo.connect(lfoGain).connect(this.windGain.gain);
     lfo.start();
 
+    // Своя озвучка, если её положили в public/sounds/ (см. SOUNDS.md).
+    this.slots = new SoundSlots(ctx, this.muffle);
+    void this.slots.load();
+
     await ctx.resume();
     this.started = true;
+  }
+
+  /** Проигрывает записанный файл, если он есть. false — играйте синтез. */
+  playSlot(name: string, volume = 1): boolean {
+    return this.slots?.play(name, volume) ?? false;
   }
 
   private makeNoise(seconds: number): AudioBuffer {
@@ -213,6 +224,7 @@ export class GameAudio {
 
   /** Удар топора по стволу. */
   chop(): void {
+    if (this.playSlot('chop')) return;
     this.blip(120, 0.09, 0.16, 'triangle');
     this.burst({ duration: 0.12, gain: 0.16, type: 'bandpass', freq: 900, freqTo: 300, q: 1.6 });
   }
@@ -242,6 +254,61 @@ export class GameAudio {
   stoke(): void {
     this.burst({ duration: 0.3, gain: 0.13, type: 'lowpass', freq: 800, freqTo: 220, q: 0.7 });
     this.burst({ duration: 0.7, attack: 0.2, gain: 0.07, type: 'bandpass', freq: 600, q: 0.6 });
+  }
+
+  /** Выстрел из дробовика: низкий удар и рваный хвост. */
+  shotgun(): void {
+    if (this.playSlot('shotgun')) return;
+    this.burst({ duration: 0.6, gain: 0.42, type: 'lowpass', freq: 2400, freqTo: 120, q: 0.6 });
+    this.burst({ duration: 0.18, gain: 0.3, type: 'highpass', freq: 2200 });
+    this.blip(70, 0.25, 0.2, 'sine');
+  }
+
+  dryFire(): void {
+    this.blip(210, 0.05, 0.08, 'square');
+  }
+
+  reload(): void {
+    this.blip(180, 0.06, 0.07, 'square');
+    window.setTimeout(() => this.blip(150, 0.07, 0.07, 'square'), 260);
+    window.setTimeout(() => this.blip(260, 0.05, 0.06, 'triangle'), 1900);
+  }
+
+  /** Стон зомби: гортанный шум с подвыванием. */
+  groan(distance: number, notice = false): void {
+    if (this.playSlot(notice ? 'zombie_notice' : 'zombie_idle', Math.max(0.15, 1 - distance / 30))) return;
+    const gain = Math.max(0.02, 0.16 * (1 - distance / 30)) * (notice ? 1.6 : 1);
+    this.burst({
+      duration: notice ? 0.8 : 1.3,
+      attack: 0.15,
+      gain,
+      type: 'bandpass',
+      freq: notice ? 420 : 260,
+      freqTo: notice ? 180 : 140,
+      q: 3.5,
+      pan: Math.random() * 1.4 - 0.7,
+    });
+  }
+
+  zombieDown(): void {
+    if (this.playSlot('zombie_die')) return;
+    this.burst({ duration: 0.5, gain: 0.2, type: 'lowpass', freq: 900, freqTo: 90, q: 0.8 });
+  }
+
+  /** Игроку прилетело. */
+  hurt(): void {
+    if (this.playSlot('hero_hurt')) return;
+    this.burst({ duration: 0.35, gain: 0.26, type: 'lowpass', freq: 1400, freqTo: 200, q: 0.9 });
+    this.blip(90, 0.18, 0.14, 'sine');
+  }
+
+  death(): void {
+    if (this.playSlot('hero_death')) return;
+    this.burst({ duration: 1.6, attack: 0.1, gain: 0.24, type: 'lowpass', freq: 700, freqTo: 60, q: 0.7 });
+  }
+
+  bandage(): void {
+    this.burst({ duration: 0.5, attack: 0.2, gain: 0.09, type: 'highpass', freq: 2400 });
   }
 
   private cricket(): void {

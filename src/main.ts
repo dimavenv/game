@@ -4,6 +4,7 @@ import { Game } from './client/game';
 const canvas = document.getElementById('game') as HTMLCanvasElement;
 const menu = document.getElementById('menu') as HTMLDivElement;
 const play = document.getElementById('play') as HTMLButtonElement;
+const restart = document.getElementById('restart') as HTMLButtonElement;
 
 const game = new Game(canvas);
 
@@ -17,6 +18,10 @@ const params = new URLSearchParams(location.search);
 const pointerLock = !params.has('nolock');
 // ?t=600 — сразу перескочить в нужную секунду суток (проверка освещения).
 if (import.meta.env.DEV && params.has('t')) game.setTime(Number(params.get('t')));
+
+restart.addEventListener('click', () => {
+  if (confirm('Начать заново? Весь прогресс пропадёт.')) game.restart();
+});
 
 play.addEventListener('click', () => {
   menu.classList.add('hidden');

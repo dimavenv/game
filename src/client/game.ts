@@ -2,12 +2,15 @@ import * as THREE from 'three';
 import {
   APPLES,
   CHOP,
+  ECONOMY,
   FISHING,
+  HEALTH,
   INTERACT,
   PLAYER,
   STOVE,
   TIME,
   TIME_CYCLE,
+  WEAPONS,
   WORLD,
   WORLD_SEED,
 } from '../shared/balance';
@@ -17,6 +20,15 @@ import { questProgress } from '../shared/quests';
 import { clamp, mulberry32, smoothstep } from '../shared/rng';
 import { applesReady, createGameState, isBlessed, type GameState } from '../shared/state';
 import { advanceClock, createClock, isDark } from '../shared/time';
+import {
+  damageZombie,
+  findMeleeTarget,
+  shotgunTargets,
+  spawnZombies,
+  stepZombies,
+  zombieCount,
+  type Zombie,
+} from '../shared/zombies';
 import { campfirePosition } from '../shared/world/buildings';
 import { Terrain } from '../shared/world/terrain';
 import { generateWorld, type WorldData } from '../shared/world/worldgen';
@@ -26,6 +38,8 @@ import { Input } from './input';
 import { AxeItem } from './items/axe';
 import { CigaretteItem } from './items/cigarette';
 import { RodItem } from './items/rod';
+import { ShotgunItem } from './items/shotgun';
+import { clearSave, loadGame, saveGame } from './save';
 import { Interactions, type Target } from './interaction';
 import { createNpc, type NpcHandle } from './render/characters';
 import { Forest, TREE_HEIGHT } from './render/forest';
@@ -42,6 +56,7 @@ import {
   type StallBuild,
 } from './render/structures';
 import { buildTerrainMesh } from './render/terrainMesh';
+import { ZombieView } from './render/zombies';
 import { Water } from './render/water';
 import { Dialog, type DialogSpec } from './ui/dialog';
 import { Hud } from './ui/hud';
@@ -83,6 +98,10 @@ export class Game {
   private readonly cigarette: CigaretteItem;
   private readonly axe: AxeItem;
   private readonly rod: RodItem;
+  private readonly shotgun: ShotgunItem;
+  private readonly zombieView = new ZombieView(40);
+  private zombies: Zombie[] = [];
+  private nextZombieId = 0;
 
   private readonly world: WorldData;
   private readonly player: PlayerState;
@@ -101,6 +120,14 @@ export class Game {
   private slot: Slot = 1;
   private seated = false;
   private target: Target | null = null;
+  private dying = false;
+  private deathTimer = 0;
+  private hurtFlash = 0;
+  private bandaging = 0;
+  private groanTimer = 0;
+  private saveTimer = 0;
+  private wasDark = false;
+  private signSeen = false;
   private readonly offerings: { position: THREE.Vector3; timer: number; wisp: number }[] = [];
   private readonly wind = new THREE.Vector3();
   private readonly raycaster = new THREE.Raycaster();
@@ -175,8 +202,15 @@ export class Game {
     this.cigarette = new CigaretteItem(this.camera, this.smoke, this.audio, this.state.inventory);
     this.axe = new AxeItem(this.camera);
     this.rod = new RodItem(this.camera, this.scene, this.audio, this.rng);
+    this.shotgun = new ShotgunItem(this.camera);
+    this.scene.add(this.zombieView.group);
 
-    this.flashlight = new THREE.SpotLight(0xfff2d8, 0, 34, 0.5, 0.55, 1.2);
+    // Прошлая партия, если она была.
+    loadGame(this.state, this.clock, this.player);
+    this.player.eyeY = this.world.terrain.height(this.player.x, this.player.z) + PLAYER.eyeHeight;
+    this.restoreWorldVisuals();
+
+    this.flashlight = new THREE.SpotLight(0xfff2d8, 0, 42, 0.44, 0.45, 1.1);
     this.flashlight.position.set(0.12, -0.06, 0);
     this.flashlight.target.position.set(0, -0.05, -1);
     this.camera.add(this.flashlight, this.flashlight.target);
@@ -271,9 +305,16 @@ export class Game {
 
     this.elapsed += dt;
     this.look();
+    if (this.dying) {
+      this.deathTimer -= dt;
+      if (this.deathTimer <= 0) this.respawn();
+    }
     this.simulate(dt);
     this.cigarette.update(dt, this.camera);
     if (this.axe.update(dt)) this.applyAxeHit();
+    if (this.shotgun.update(dt) === 'reload-done') this.finishReload();
+    if (this.bandaging > 0) this.bandaging -= dt;
+    if (this.hurtFlash > 0) this.hurtFlash = Math.max(0, this.hurtFlash - dt * 1.6);
     this.handleRod(dt);
     this.syncCamera(dt);
     this.updateWorld(dt);
@@ -329,6 +370,19 @@ export class Game {
     const scale = this.seated && this.state.world.stoveFuel > 0 ? TIME.stoveTimeScale : 1;
     advanceClock(this.clock, dt, scale);
     if (this.clock.day !== previousDay) this.newDay();
+    this.nightCycle();
+    this.updateZombies(dt);
+
+    // У горящей печки раны затягиваются сами.
+    if (this.seated && this.state.world.stoveFuel > 0 && this.player.health < PLAYER.maxHealth) {
+      this.player.health = Math.min(PLAYER.maxHealth, this.player.health + HEALTH.stoveRegen * dt * scale);
+    }
+
+    this.saveTimer -= dt;
+    if (this.saveTimer <= 0) {
+      this.saveTimer = 12;
+      saveGame(this.state, this.clock, this.player);
+    }
 
     // Печь прогорает по игровому времени: у кресла дрова уходят быстрее.
     if (this.state.world.stoveFuel > 0) {
@@ -356,15 +410,25 @@ export class Game {
     if (this.input.wasPressed('Digit3')) pick(3, inv.hasShotgun, 'Дробовика нет — у Томера 900 ₪');
     if (this.input.wasPressed('Digit4')) pick(4, inv.hasRod, 'Удочки нет — у Томера 200 ₪');
     if (this.input.wasPressed('Digit5')) pick(5, inv.hasFlashlight, 'Фонарика нет — у Томера 150 ₪');
+    if (this.input.wasPressed('KeyR') && this.slot === 3) this.reloadShotgun();
+    if (this.input.wasPressed('KeyQ')) this.useBandage();
 
     this.cigarette.setHidden(this.slot !== 1);
     this.axe.setVisible(this.slot === 2);
     this.rod.setVisible(this.slot === 4);
-    this.flashlight.intensity = this.slot === 5 && inv.hasFlashlight ? 4.5 : 0;
+    this.shotgun.setVisible(this.slot === 3 && inv.hasShotgun);
+    this.flashlight.intensity = this.slot === 5 && inv.hasFlashlight ? 10 : 0;
   }
 
   /** ЛКМ: у каждого предмета своё действие. */
   private useItem(): void {
+    if (this.dying) return;
+    if (this.slot === 3) {
+      const event = this.shotgun.fire();
+      if (event === 'fired') this.fireShotgun();
+      else if (event === 'empty') this.audio.dryFire();
+      return;
+    }
     if (this.slot === 2) {
       if (this.axe.swing()) this.audio.chop();
       return;
@@ -389,6 +453,7 @@ export class Game {
     const fish = rollFish(this.rng, isBlessed(this.state, this.clock.day));
     this.state.inventory.fish.push(fish);
     this.audio.pickup();
+    this.audio.playSlot('hero_fish');
     this.toasts.push(`Поймал: ${fishLabel(fish)}`, fish.kind === 'boot' ? 'bad' : 'normal');
   }
 
@@ -397,8 +462,15 @@ export class Game {
     if (event === 'missed') this.toasts.push('Сорвалась', 'bad');
   }
 
-  /** Топор бьёт в середине замаха — тут считаем попадание по стволу. */
+  /** Топор бьёт в середине замаха: сперва проверяем зомби, потом ствол. */
   private applyAxeHit(): void {
+    const damage = this.state.inventory.hasGoodAxe ? WEAPONS.axe.goodDamage : WEAPONS.axe.damage;
+    const victim = findMeleeTarget(this.zombies, this.player, WEAPONS.axe.range, WEAPONS.axe.arc);
+    if (victim) {
+      if (damageZombie(victim, damage)) this.onZombieKilled();
+      return;
+    }
+
     const id = this.interactions.findTree(this.player, this.state, this.clock.day);
     if (id === null) return;
     const world = this.state.world;
@@ -522,14 +594,16 @@ export class Game {
       timer: 90,
       wisp: 0,
     });
+    this.audio.playSlot('hero_tribute');
     this.toasts.push('Серёга Пират, ты был легендой. Клевать будет лучше', 'money');
   }
 
   private openBuravchik(): void {
+    this.audio.playSlot('buravchik_greet');
     const day = this.clock.day;
     const spec = (): DialogSpec => buravchikDialog(this.state, day, this.state.inventory.cigarettes > 0);
     this.openDialog(spec, (id) => {
-      const result = buravchikAction(id, this.state, day, this.rng);
+      const result = buravchikAction(id, this.state, day, this.rng, this.clock.day > 1);
       if (result.spentCigarette) this.state.inventory.cigarettes -= 1;
       this.applyDialogResult(result);
       return result.close === true;
@@ -537,6 +611,7 @@ export class Game {
   }
 
   private openTomer(): void {
+    this.audio.playSlot('tomer_greet');
     const spec = (): DialogSpec => tomerDialog(this.state);
     this.openDialog(spec, (id) => {
       const result = tomerAction(id, this.state);
@@ -549,10 +624,12 @@ export class Game {
     toast?: string;
     tone?: 'normal' | 'money' | 'bad';
     sound?: string;
+    voice?: string;
   }): void {
     if (result.toast) this.toasts.push(result.toast, result.tone ?? 'normal');
     if (result.sound === 'coins') this.audio.coins();
     if (result.sound === 'pickup') this.audio.pickup();
+    if (result.voice) this.audio.playSlot(result.voice);
   }
 
   private openDialog(spec: () => DialogSpec, onAction: (id: string) => boolean): void {
@@ -638,6 +715,16 @@ export class Game {
     this.smoke.update(dt, this.wind);
     this.updateOfferings(dt);
 
+    // Реплика героя у таблички — если для неё записан файл.
+    if (!this.signSeen) {
+      const dx = WORLD.sign.x - this.player.x;
+      const dz = WORLD.sign.z - this.player.z;
+      if (Math.hypot(dx, dz) < 6) {
+        this.signSeen = true;
+        this.audio.playSlot('hero_sign');
+      }
+    }
+
     this.audio.setMuffle(this.cigarette.muffle);
     this.audio.update(dt, {
       night,
@@ -679,9 +766,180 @@ export class Game {
     if (this.seated) return 'W — встать';
     if (this.target && this.target.distance < INTERACT.npcRange) return this.target.hint;
     if (this.slot === 4) return this.rod.hint();
-    if (this.slot === 2) return 'ЛКМ — рубить';
+    if (this.slot === 3) return this.shotgun.hint(this.state.inventory.shells);
+    if (this.slot === 2) return this.zombies.length > 0 ? 'ЛКМ — бить' : 'ЛКМ — рубить';
     if (this.slot === 1) return this.cigarette.hint();
     return '';
+  }
+
+
+  /** Возвращает картинку в согласие с загруженным состоянием мира. */
+  private restoreWorldVisuals(): void {
+    const day = this.clock.day;
+    for (const [id, mutation] of this.state.world.trees) {
+      if (mutation.choppedDay === null) continue;
+      if (day - mutation.choppedDay >= CHOP.regrowDays) continue;
+      const tree = this.world.trees[id];
+      if (!tree) continue;
+      this.forest.setTreeVisible(id, false);
+      const obstacle = this.world.treeObstacles[id];
+      if (obstacle) obstacle.disabled = true;
+      this.chopEffects.addStump(id, tree.x, tree.y, tree.z, tree.scale);
+    }
+  }
+
+  /** Сумерки — стая выходит, рассвет — расходится. */
+  private nightCycle(): void {
+    const dark = isDark(this.clock.t);
+    if (dark === this.wasDark) return;
+    this.wasDark = dark;
+
+    if (dark) {
+      const count = zombieCount(this.clock.day);
+      this.zombies = spawnZombies(this.rng, this.world, count, this.player, this.nextZombieId);
+      this.nextZombieId += count;
+      this.audio.playSlot('night_start');
+      this.toasts.push('Темнеет. В чаще кто-то ходит', 'bad');
+    } else {
+      this.zombies = [];
+      this.zombieView.sync(this.zombies);
+      this.toasts.push('Рассвело. Лес пуст');
+    }
+  }
+
+  private updateZombies(dt: number): void {
+    if (this.zombies.length === 0) return;
+
+    const hit = stepZombies(this.zombies, this.player, this.world, dt, this.rng);
+    if (hit.damage > 0 && !this.dying) this.takeDamage(hit.damage);
+
+    // Стоны: чем ближе стая, тем чаще.
+    this.groanTimer -= dt;
+    if (this.groanTimer <= 0) {
+      let nearest = Infinity;
+      let chasing = false;
+      for (const z of this.zombies) {
+        if (z.state === 'dying') continue;
+        const d = Math.hypot(z.x - this.player.x, z.z - this.player.z);
+        if (d < nearest) nearest = d;
+        if (z.state !== 'wander' && d < 24) chasing = true;
+      }
+      if (nearest < 40) {
+        this.audio.groan(nearest, chasing);
+        this.groanTimer = chasing ? 1.4 + this.rng() * 1.2 : 3 + this.rng() * 4;
+      } else {
+        this.groanTimer = 4;
+      }
+    }
+
+    this.zombieView.sync(this.zombies);
+  }
+
+  private fireShotgun(): void {
+    this.audio.shotgun();
+    const targets = shotgunTargets(this.zombies, this.player, WEAPONS.shotgun.range, WEAPONS.shotgun.spread);
+    let killed = 0;
+    for (const { zombie, damage } of targets) {
+      if (damageZombie(zombie, damage, false)) killed += 1;
+    }
+    for (let i = 0; i < killed; i++) this.onZombieKilled();
+    if (targets.length === 0) this.toasts.push('Мимо', 'bad');
+  }
+
+  private reloadShotgun(): void {
+    if (this.shotgun.startReload(this.state.inventory.shells) !== 'reload-start') return;
+    this.audio.reload();
+  }
+
+  /** Патроны уходят из кармана только когда перезарядка дошла до конца. */
+  private finishReload(): void {
+    const inv = this.state.inventory;
+    const take = Math.min(WEAPONS.shotgun.capacity - this.shotgun.loaded, inv.shells);
+    if (take <= 0) return;
+    inv.shells -= take;
+    this.shotgun.loaded += take;
+  }
+
+  private useBandage(): void {
+    const inv = this.state.inventory;
+    if (this.player.health >= PLAYER.maxHealth) return;
+    if (inv.bandages <= 0) {
+      this.toasts.push('Бинтов нет — у Томера 45 ₪', 'bad');
+      return;
+    }
+    inv.bandages -= 1;
+    this.player.health = Math.min(PLAYER.maxHealth, this.player.health + HEALTH.bandageHeal);
+    this.bandaging = HEALTH.bandageTime;
+    this.audio.bandage();
+    this.toasts.push('Перевязался');
+  }
+
+  private onZombieKilled(): void {
+    this.audio.zombieDown();
+    const quest = this.state.quest;
+    if (quest?.kind === 'zombies') {
+      quest.progress += 1;
+      this.toasts.push(`Упокоен: ${quest.progress}/${quest.target}`);
+    } else {
+      this.toasts.push('Упокоен');
+    }
+  }
+
+  private takeDamage(amount: number): void {
+    this.player.health -= amount;
+    this.hurtFlash = 1;
+    this.audio.hurt();
+    if (this.player.health <= 0) {
+      this.player.health = 0;
+      this.die();
+    }
+  }
+
+  /** Смерть: экран гаснет, утром игрок приходит в себя у печки. */
+  private die(): void {
+    if (this.dying) return;
+    this.dying = true;
+    this.deathTimer = HEALTH.deathFade;
+    this.audio.death();
+    this.zombies = [];
+    this.zombieView.sync(this.zombies);
+  }
+
+  private respawn(): void {
+    const inv = this.state.inventory;
+    const lost = Math.round(inv.money * ECONOMY.deathMoneyLoss);
+    inv.money -= lost;
+    const catchSize = inv.fish.length;
+    inv.fish = [];
+    inv.apples = 0;
+
+    // Приходит в себя у печки следующим утром.
+    this.clock.day += 1;
+    this.clock.t = TIME.dawn + 40;
+    this.wasDark = false;
+    const seat = this.world.hut.chairs[1];
+    this.player.x = seat.x;
+    this.player.z = seat.z + 0.8;
+    this.player.vx = 0;
+    this.player.vz = 0;
+    this.player.health = PLAYER.maxHealth * 0.6;
+    this.player.breath = PLAYER.breathMax;
+    this.player.eyeY = this.world.hut.floorY + PLAYER.eyeHeight;
+    this.dying = false;
+    this.seated = false;
+    this.cigarette.resetDay();
+
+    this.toasts.push(
+      `Буравчик дотащил тебя до хижины. Минус ${lost} ₪` + (catchSize > 0 ? ` и весь улов` : ''),
+      'bad',
+    );
+    saveGame(this.state, this.clock, this.player);
+  }
+
+  /** Полностью новая партия: чистим сохранение и перезапускаем страницу. */
+  restart(): void {
+    clearSave();
+    location.reload();
   }
 
   private updateHud(): void {
@@ -695,8 +953,14 @@ export class Game {
     this.hud.setSlots(
       this.slot,
       { 1: true, 2: true, 3: inv.hasShotgun, 4: inv.hasRod, 5: inv.hasFlashlight },
-      { 1: String(inv.cigarettes), 3: inv.hasShotgun ? String(inv.shells) : '', 4: '', 5: '' },
+      {
+        1: String(inv.cigarettes),
+        3: inv.hasShotgun ? `${this.shotgun.loaded}/${inv.shells}` : '',
+        4: '',
+        5: '',
+      },
     );
+    this.hud.setHealth(this.player.health / PLAYER.maxHealth, this.hurtFlash, this.dying);
 
     if (this.target?.name && this.target.labelPoint) {
       this.nameplate.show(this.target.name, this.target.labelPoint, this.camera);

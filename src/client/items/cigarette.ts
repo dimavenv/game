@@ -158,6 +158,7 @@ export class CigaretteItem {
     }
     if (this.state === 'lit') {
       this.setState('inhale');
+      this.audio.playSlot('hero_puff');
       this.audio.inhale(CIGARETTE.inhaleTime);
       this.burn -= CIGARETTE.puffBurn;
     }

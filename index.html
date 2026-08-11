@@ -15,6 +15,9 @@
     <!-- Тёплый свет и виньетка от затяжки: дешевле полноценного постпроцессинга -->
     <div id="warm" class="overlay"></div>
     <div id="vignette" class="overlay"></div>
+    <!-- Кровь по краям кадра и чёрный экран смерти -->
+    <div id="damage" class="overlay"></div>
+    <div id="fade" class="overlay"></div>
 
     <div id="hud" class="hidden">
       <div id="clock">
@@ -26,6 +29,7 @@
       <div id="purse">
         <span id="money">0 ₪</span>
         <span id="carry"></span>
+        <span id="health" class="hidden"></span>
       </div>
 
       <div id="quest" class="hidden"></div>
@@ -53,9 +57,11 @@
           <li><b>мышь</b> — смотреть, <b>ЛКМ</b> — действие предметом</li>
           <li><b>1–5</b> — сигарета, топор, дробовик, удочка, фонарик</li>
           <li><b>E</b> — говорить, собирать, садиться</li>
+          <li><b>R</b> — перезарядить, <b>Q</b> — перевязаться</li>
           <li><b>Esc</b> — пауза</li>
         </ul>
         <button id="play">Играть</button>
+        <button id="restart" class="ghost">Начать заново</button>
         <p class="note">Игра захватит курсор мыши. Esc — вернуть.</p>
       </div>
     </div>

@@ -170,3 +170,51 @@ export const INTERACT = {
   range: 3.2,
   npcRange: 3.2,
 } as const;
+
+/** Зомби (этап 3). */
+export const ZOMBIE = {
+  /** Сколько выходит в первую ночь и насколько больше в каждую следующую. */
+  baseCount: 12,
+  perNight: 2,
+  maxCount: 34,
+  /** Метры: замечает игрока, догоняет, бьёт. */
+  sightRange: 20,
+  attackRange: 1.6,
+  loseRange: 32,
+  walkSpeed: 0.95,
+  chaseSpeed: 3.4,
+  health: 100,
+  /** Урон за удар и пауза между ударами. */
+  damage: 25,
+  attackCooldown: 1.4,
+  /** Оглушение после попадания топором. */
+  staggerTime: 0.45,
+  /** Ближе этого к хижине они не подходят: поляна — убежище. */
+  safeRadius: 20,
+  /** Ночью не появляются вплотную к игроку. */
+  spawnMinDistance: 55,
+} as const;
+
+/** Оружие ближнего боя и дробовик. */
+export const WEAPONS = {
+  axe: { damage: 34, goodDamage: 52, range: 2.4, arc: 0.55 },
+  shotgun: {
+    capacity: 2,
+    reloadTime: 2.4,
+    fireCooldown: 0.55,
+    range: 18,
+    /** Урон в упор и на пределе дальности. */
+    nearDamage: 130,
+    farDamage: 28,
+    spread: 0.28,
+  },
+} as const;
+
+/** Лечение и смерть. */
+export const HEALTH = {
+  bandageHeal: 45,
+  bandageTime: 1.6,
+  /** Медленное восстановление у горящей печки. */
+  stoveRegen: 2.5,
+  deathFade: 2.2,
+} as const;

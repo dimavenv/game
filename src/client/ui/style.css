@@ -442,3 +442,40 @@ body {
 .dialog-close:hover {
   color: var(--ink);
 }
+
+/* --- Урон и смерть --- */
+#damage {
+  opacity: 0;
+  background: radial-gradient(ellipse at center, rgba(120, 10, 10, 0) 42%, rgba(140, 12, 12, 0.72) 100%);
+  transition: opacity 0.25s ease;
+}
+
+#fade {
+  opacity: 0;
+  background: #000;
+  transition: opacity 1.6s ease;
+  z-index: 7;
+}
+
+#purse #health {
+  color: #d99b8a;
+}
+
+#purse #health.hidden {
+  display: none;
+}
+
+#restart {
+  display: block;
+  margin: 14px auto 0;
+  font: inherit;
+  font-size: 14px;
+  color: rgba(232, 226, 212, 0.45);
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+#restart:hover {
+  color: var(--ink);
+}
