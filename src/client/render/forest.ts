@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import type { PropInstance, WorldData } from '../../shared/world/worldgen';
 import { TreeType } from '../../shared/world/worldgen';
+import type { QualitySettings } from '../quality';
 
 /**
  * Склеивает части в одну геометрию. Индексы снимаются: цилиндры индексированы,
@@ -104,6 +105,52 @@ function rockGeometry(): THREE.BufferGeometry {
   return tint(g, 0x77746c);
 }
 
+/** Папоротник: несколько вееров из узких перьев, крест-накрест. */
+function fernGeometry(): THREE.BufferGeometry {
+  const parts: THREE.BufferGeometry[] = [];
+  const shades = [0x3f6a33, 0x4c7a3a, 0x35592c];
+  for (let f = 0; f < 5; f++) {
+    const angle = (f / 5) * Math.PI * 2;
+    const tiltDir = new THREE.Vector3(Math.cos(angle), 0, Math.sin(angle));
+    for (let i = 0; i < 4; i++) {
+      const t = i / 3;
+      const len = 0.5 - t * 0.16;
+      const leaf = new THREE.PlaneGeometry(0.11, len);
+      leaf.rotateX(-Math.PI / 2 + 0.55 + t * 0.25);
+      leaf.translate(0, 0.12 + t * 0.16, len * 0.42);
+      const g = leaf.clone();
+      g.rotateY(angle + (i - 1.5) * 0.16);
+      g.translate(tiltDir.x * 0.02, 0, tiltDir.z * 0.02);
+      parts.push(tint(g, shades[(f + i) % shades.length]));
+    }
+  }
+  const geo = merge(parts);
+  // Как и трава: нормали вверх, иначе перья чернеют на светлой земле.
+  const normal = geo.getAttribute('normal') as THREE.BufferAttribute;
+  for (let i = 0; i < normal.count; i++) normal.setXYZ(i, 0, 1, 0);
+  normal.needsUpdate = true;
+  return geo;
+}
+
+/** Цветок: стебелёк с головкой. На каждый цвет — своя пачка инстансов. */
+function flowerGeometry(petalHex: number, coreHex: number): THREE.BufferGeometry {
+  const parts: THREE.BufferGeometry[] = [];
+  const stem = new THREE.CylinderGeometry(0.008, 0.012, 0.24, 4);
+  stem.translate(0, 0.12, 0);
+  parts.push(tint(stem, 0x4f6f36));
+  for (let i = 0; i < 5; i++) {
+    const a = (i / 5) * Math.PI * 2;
+    const petal = new THREE.PlaneGeometry(0.055, 0.075);
+    petal.rotateX(-Math.PI / 2 + 0.5);
+    petal.translate(Math.cos(a) * 0.045, 0.26, Math.sin(a) * 0.045);
+    parts.push(tint(petal, petalHex));
+  }
+  const head = new THREE.IcosahedronGeometry(0.022, 0);
+  head.translate(0, 0.265, 0);
+  parts.push(tint(head, coreHex));
+  return merge(parts);
+}
+
 /** Текстура пучка травы: несколько мазков на прозрачном фоне. */
 function grassTexture(): THREE.Texture {
   const c = document.createElement('canvas');
@@ -176,7 +223,7 @@ export class Forest {
   /** Валуны и камешки прячем так же, как срубленные деревья. */
   private readonly props = new Map<string, { mesh: THREE.InstancedMesh; matrices: THREE.Matrix4[] }>();
 
-  constructor(world: WorldData) {
+  constructor(world: WorldData, quality: QualitySettings) {
     const trees = [
       { type: TreeType.Spruce, geo: spruceGeometry() },
       { type: TreeType.Pine, geo: pineGeometry() },
@@ -208,10 +255,30 @@ export class Forest {
       this.group.add(mesh);
     }
 
-    this.addProps(bushGeometry(), world.bushes, 0.3, 0.02, true);
+    // Камни и камешки — часть игры, их прячем только по сюжету.
+    // Всё остальное под ногами режется настройкой качества.
+    const cut = (list: PropInstance[], factor: number): PropInstance[] =>
+      factor >= 1 ? list : list.slice(0, Math.round(list.length * factor));
+
+    this.addProps(bushGeometry(), cut(world.bushes, quality.props), 0.3, 0.02, true);
     this.addProps(rockGeometry(), world.rocks, 0, 0, true, 'rock');
     this.addProps(pebbleGeometry(), world.pebbles, 0, 0, false, 'pebble');
-    this.addGrass(world.grass);
+    this.addProps(fernGeometry(), cut(world.ferns, quality.props), 0.05, 0.05, false, undefined, true);
+
+    const flowers = cut(world.flowers, quality.props);
+    const palette: [number, number][] = [
+      [0xf2f0e6, 0xf2d24a],
+      [0xd8a0c8, 0xf2d24a],
+      [0xa8c0e8, 0xf0e08a],
+    ];
+    palette.forEach(([petal, core], variant) => {
+      const list = flowers.filter((f) => f.variant === variant);
+      if (list.length > 0) {
+        this.addProps(flowerGeometry(petal, core), list, 0.05, 0.06, false, undefined, true);
+      }
+    });
+
+    this.addGrass(cut(world.grass, quality.grass));
   }
 
   private makeInstanced(
@@ -220,12 +287,14 @@ export class Forest {
     swayBase: number,
     swayScale: number,
     shadow: boolean,
+    doubleSide = false,
   ): THREE.InstancedMesh {
     const mat = new THREE.MeshStandardMaterial({
       vertexColors: true,
       flatShading: true,
       roughness: 0.95,
       metalness: 0,
+      side: doubleSide ? THREE.DoubleSide : THREE.FrontSide,
     });
     this.applySway(mat, swayBase, swayScale);
     const mesh = new THREE.InstancedMesh(geo, mat, Math.max(count, 1));
@@ -255,8 +324,9 @@ export class Forest {
     swayScale: number,
     shadow: boolean,
     key?: string,
+    doubleSide = false,
   ): void {
-    const mesh = this.makeInstanced(geo, list.length, swayBase, swayScale, shadow);
+    const mesh = this.makeInstanced(geo, list.length, swayBase, swayScale, shadow, doubleSide);
     const matrices: THREE.Matrix4[] = [];
     const m = new THREE.Matrix4();
     list.forEach((p, i) => {

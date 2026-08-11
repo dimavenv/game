@@ -7,8 +7,8 @@ export const WORLD_SEED = 'krugloe-ozero';
 
 /** Мир: 400x400 метров, за BOUND начинается непроходимая чаща. */
 export const WORLD = {
-  half: 200,
-  bound: 196,
+  half: 400,
+  bound: 396,
   /** Озеро квадратное: расстояние считается по Чебышёву. Оно «Круглое». */
   lakeHalf: 30,
   waterLevel: 0,
@@ -19,7 +19,9 @@ export const WORLD = {
   /** Табличка «Круглое озеро» на северном берегу. */
   sign: { x: -6, z: -33.5 },
   /** Памятник Серёге Пирату — в глухом углу леса (этап 2). */
-  monument: { x: -118, z: 96 },
+  monument: { x: -186, z: 152 },
+  /** Катамаран у северо-восточного угла озера: корма на песке, нос в воде. */
+  catamaran: { x: 26.5, z: -26.5, yaw: -Math.PI / 4 },
 } as const;
 
 export const TIME = {
@@ -128,16 +130,21 @@ export const FOREST = {
   cell: 5,
   baseDensity: 0.52,
   /** Ближе к краю мира лес густеет до непролазного. */
-  thicketFrom: 150,
+  thicketFrom: 330,
   thicketDensity: 0.97,
   /** Свободная полоса песка вокруг озера. */
   shoreMargin: 6,
   trunkRadius: 0.42,
-  grassTufts: 7000,
-  bushes: 900,
-  rocks: 260,
+  grassTufts: 26000,
+  bushes: 3400,
+  rocks: 900,
+  /** Мелкая подложка леса: папоротники и цветы. */
+  ferns: 5200,
+  flowers: 3000,
   /** Яблони (этап 2). */
-  appleTrees: 15,
+  appleTrees: 30,
+  /** В каком радиусе от озера раскиданы яблони и дикие лозы. */
+  landmarkSpread: 300,
 } as const;
 
 /** Рубка деревьев (этап 2). */
@@ -153,7 +160,7 @@ export const CHOP = {
 
 /** Камни: мелкие подбираются руками, валуны разбиваются молотом. */
 export const STONES = {
-  pebbles: 150,
+  pebbles: 520,
   pebbleRegrowDays: 2,
   boulderHits: 4,
   boulderStones: 3,
@@ -214,6 +221,8 @@ export const ZOMBIE = {
   safeRadius: 20,
   /** Ночью не появляются вплотную к игроку. */
   spawnMinDistance: 55,
+  /** ...но и не расползаются по всему лесу: стая держится вокруг игрока. */
+  spawnMaxDistance: 190,
 } as const;
 
 /** Оружие ближнего боя и дробовик. */
@@ -242,7 +251,7 @@ export const HEALTH = {
 
 /** Виноград и виноделие (этап 5). */
 export const WINE = {
-  wildVines: 12,
+  wildVines: 26,
   /** Сколько гроздей даёт одна лоза. */
   minBunches: 3,
   maxBunches: 6,
@@ -269,7 +278,9 @@ export const AVI = {
   wineMultiplier: 3,
   prices: { shells5: 40, bandage: 30 },
   /** Слышно его музыку с этого расстояния. */
-  hearRange: 34,
+  hearRange: 40,
+  /** Дальше этого от озера Ави не уходит — иначе его не найти. */
+  maxDistanceFromLake: 300,
   /** Насколько сильно трясёт кадр после кокаина. */
   tremorSway: 0.012,
 } as const;

@@ -1,6 +1,14 @@
 import { FOREST, STONES, WINE, WORLD } from '../balance';
 import { ValueNoise, lerp, mulberry32, smoothstep, toSeed } from '../rng';
-import { hutLayout, stallLayout, type BoxCollider, type HutLayout, type StallLayout } from './buildings';
+import {
+  catamaranLayout,
+  hutLayout,
+  stallLayout,
+  type BoxCollider,
+  type CatamaranLayout,
+  type HutLayout,
+  type StallLayout,
+} from './buildings';
 import { ObstacleGrid, type Obstacle } from './grid';
 import { Terrain } from './terrain';
 
@@ -31,6 +39,9 @@ export interface WorldData {
   bushes: PropInstance[];
   rocks: PropInstance[];
   grass: PropInstance[];
+  /** Мелочь под ногами: одна картинка, но лес перестаёт быть лысым. */
+  ferns: PropInstance[];
+  flowers: PropInstance[];
   /** Яблони: по ним ходят за яблоками для Буравчика. */
   appleTrees: PropInstance[];
   /** Мелкие камешки: подбираются руками. */
@@ -40,6 +51,7 @@ export interface WorldData {
   monument: { x: number; z: number; y: number; rot: number };
   hut: HutLayout;
   stall: StallLayout;
+  catamaran: CatamaranLayout;
   boxes: BoxCollider[];
   obstacles: ObstacleGrid;
   /** Препятствия-стволы по индексу дерева: срубленное отключается здесь. */
@@ -82,9 +94,10 @@ function placeLandmarks(seed: number, terrain: Terrain, count: number, minGap: n
   const rng = mulberry32(seed);
   const out: PropInstance[] = [];
   let guard = count * 400;
+  const spread = Math.min(FOREST.landmarkSpread, WORLD.bound - 10);
   while (out.length < count && guard-- > 0) {
-    const x = (rng() * 2 - 1) * 165;
-    const z = (rng() * 2 - 1) * 165;
+    const x = (rng() * 2 - 1) * spread;
+    const z = (rng() * 2 - 1) * spread;
     if (Terrain.lakeDistance(x, z) < WORLD.lakeHalf + 14) continue;
     if (distToClearing(x, z) < WORLD.clearing.r + 8) continue;
     if (terrain.surface(x, z) !== 'grass') continue;
@@ -181,6 +194,8 @@ export function generateWorld(seedInput: string | number): WorldData {
 
   const hut = hutLayout(terrain);
   const stall = stallLayout(terrain);
+  const catamaran = catamaranLayout();
+  for (const o of catamaran.obstacles) obstacles.add({ x: o.x, z: o.z, radius: o.radius, id: -1 });
 
   return {
     seed,
@@ -190,6 +205,8 @@ export function generateWorld(seedInput: string | number): WorldData {
     rocks: scatter(FOREST.rocks, true, 0.5),
     grass: scatter(FOREST.grassTufts, false, 1.5),
     pebbles: scatter(STONES.pebbles, true, 0.5),
+    ferns: scatter(FOREST.ferns, false, 2),
+    flowers: scatter(FOREST.flowers, false, 2),
     appleTrees,
     vines,
     monument: {
@@ -200,6 +217,7 @@ export function generateWorld(seedInput: string | number): WorldData {
     },
     hut,
     stall,
+    catamaran,
     boxes: [...hut.colliders, ...stall.colliders],
     obstacles,
     treeObstacles,

@@ -3,8 +3,6 @@ import { WORLD } from '../../shared/balance';
 import { LAND_BASE, Terrain } from '../../shared/world/terrain';
 import { ValueNoise, clamp, smoothstep } from '../../shared/rng';
 
-const SEGMENTS = 240;
-
 const GRASS_A = new THREE.Color(0x4f7c3a);
 const GRASS_B = new THREE.Color(0x66944a);
 const GRASS_DRY = new THREE.Color(0x7f8c4a);
@@ -15,9 +13,9 @@ const BOTTOM = new THREE.Color(0x5d5238);
  * Земля — одна плоскость, продавленная функцией высоты. Плоское затенение
  * даёт гранёный низкополигональный вид без единой текстуры.
  */
-export function buildTerrainMesh(terrain: Terrain, seed: number): THREE.Mesh {
+export function buildTerrainMesh(terrain: Terrain, seed: number, segments: number): THREE.Mesh {
   const size = WORLD.half * 2;
-  const geo = new THREE.PlaneGeometry(size, size, SEGMENTS, SEGMENTS);
+  const geo = new THREE.PlaneGeometry(size, size, segments, segments);
   geo.rotateX(-Math.PI / 2);
 
   const pos = geo.attributes.position as THREE.BufferAttribute;

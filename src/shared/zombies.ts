@@ -54,11 +54,14 @@ export function spawnZombies(
   const out: Zombie[] = [];
   let guard = count * 60;
   while (out.length < count && guard-- > 0) {
-    const x = (rng() * 2 - 1) * (WORLD.bound - 6);
-    const z = (rng() * 2 - 1) * (WORLD.bound - 6);
+    // Лес большой, поэтому стая появляется кольцом вокруг игрока.
+    const angle = rng() * Math.PI * 2;
+    const radius = ZOMBIE.spawnMinDistance + rng() * (ZOMBIE.spawnMaxDistance - ZOMBIE.spawnMinDistance);
+    const x = player.x + Math.cos(angle) * radius;
+    const z = player.z + Math.sin(angle) * radius;
+    if (Math.abs(x) > WORLD.bound - 6 || Math.abs(z) > WORLD.bound - 6) continue;
     if (world.terrain.surface(x, z) === 'water') continue;
     if (distanceToClearing(x, z) < ZOMBIE.safeRadius + 12) continue;
-    if (Math.hypot(x - player.x, z - player.z) < ZOMBIE.spawnMinDistance) continue;
     out.push({
       id: startId + out.length,
       x,

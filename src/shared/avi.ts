@@ -1,4 +1,4 @@
-import { WORLD } from './balance';
+import { AVI, WORLD } from './balance';
 import { countItem, type Inventory } from './inventory';
 import { mulberry32 } from './rng';
 import type { Terrain } from './world/terrain';
@@ -18,9 +18,13 @@ export interface AviSpot {
 /** Место на эту ночь: зависит только от номера дня, поэтому одинаково у всех. */
 export function aviSpot(day: number, seed: number, terrain: Terrain): AviSpot {
   const rng = mulberry32((seed ^ Math.imul(day + 1, 0x9e3779b1)) >>> 0);
+  const reach = Math.min(AVI.maxDistanceFromLake, WORLD.bound - 20);
   for (let attempt = 0; attempt < 400; attempt++) {
-    const x = (rng() * 2 - 1) * (WORLD.bound - 20);
-    const z = (rng() * 2 - 1) * (WORLD.bound - 20);
+    // Круг вокруг озера: далеко забираться ему незачем, иначе не найдёшь.
+    const angle = rng() * Math.PI * 2;
+    const radius = 80 + Math.sqrt(rng()) * (reach - 80);
+    const x = Math.cos(angle) * radius;
+    const z = Math.sin(angle) * radius;
     if (terrain.surface(x, z) === 'water') continue;
     if (TerrainClass.lakeDistance(x, z) < WORLD.lakeHalf + 8) continue;
     // Подальше от поляны: иначе искать нечего.
@@ -29,7 +33,7 @@ export function aviSpot(day: number, seed: number, terrain: Terrain): AviSpot {
     return { x, z, y: terrain.height(x, z), yaw: rng() * Math.PI * 2 };
   }
   // Запасной угол на случай совсем неудачного сида.
-  return { x: -120, z: -120, y: terrain.height(-120, -120), yaw: 0 };
+  return { x: -140, z: -140, y: terrain.height(-140, -140), yaw: 0 };
 }
 
 export type NightJobKind = 'wine' | 'zombies';

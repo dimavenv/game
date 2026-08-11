@@ -22,6 +22,7 @@ export type TargetKind =
   | 'monument'
   | 'stove'
   | 'chair'
+  | 'catamaran'
   | 'pebble'
   | 'vine'
   | 'structure';
@@ -47,6 +48,8 @@ export interface InteractionPoints {
   avi: THREE.Vector3 | null;
   stove: THREE.Vector3;
   chair: THREE.Vector3;
+  /** Корма катамарана: отсюда на него садятся. */
+  catamaran: THREE.Vector3;
   appleTrees: THREE.Vector3[];
   pebbles: THREE.Vector3[];
   vines: THREE.Vector3[];
@@ -163,6 +166,11 @@ export class Interactions {
     const chair = near(this.points.chair, INTERACT.range, 0.2);
     if (chair !== null) {
       consider({ kind: 'chair', index: -1, hint: 'E — сесть', distance: chair, priority: 0 });
+    }
+
+    const catamaran = near(this.points.catamaran, INTERACT.range + 0.6, 0.2);
+    if (catamaran !== null) {
+      consider({ kind: 'catamaran', index: -1, hint: 'E — сесть на катамаран', distance: catamaran, priority: 1 });
     }
 
     // Постройки, с которыми есть что делать.

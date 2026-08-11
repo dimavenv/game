@@ -214,6 +214,49 @@ body {
   color: var(--ink);
 }
 
+/* --- Выбор качества картинки --- */
+#quality {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 26px;
+  color: var(--dim);
+  font-size: 13px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+#quality-buttons {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+}
+
+#quality-buttons button {
+  font: inherit;
+  font-size: 13px;
+  letter-spacing: 0.08em;
+  text-transform: none;
+  padding: 7px 16px;
+  color: var(--dim);
+  background: transparent;
+  border: 1px solid rgba(232, 226, 212, 0.2);
+  border-radius: 2px;
+  cursor: pointer;
+  transition:
+    color 0.2s ease,
+    border-color 0.2s ease;
+}
+
+#quality-buttons button:hover {
+  color: var(--ink);
+  border-color: rgba(232, 226, 212, 0.5);
+}
+
+#quality-buttons button.active {
+  color: #e8d9a8;
+  border-color: rgba(232, 217, 168, 0.7);
+}
+
 #play {
   font: inherit;
   font-size: 18px;

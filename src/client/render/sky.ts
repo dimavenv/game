@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { TIME_CYCLE } from '../../shared/balance';
 import { sunAltitude, sunDirection } from '../../shared/time';
+import type { QualitySettings } from '../quality';
 
 /** Ключевой кадр освещения. Между кадрами всё просто линейно смешивается. */
 interface SkyKey {
@@ -129,15 +130,69 @@ const SKY_FRAG = /* glsl */ `
   uniform vec3 sunColor;
   uniform vec3 sunDir;
   uniform float sunI;
+  uniform float uTime;
+  uniform float uNight;
+  uniform float uCloud;
   varying vec3 vDir;
+
+  float hash21(vec2 p) {
+    p = fract(p * vec2(123.34, 456.21));
+    p += dot(p, p + 45.32);
+    return fract(p.x * p.y);
+  }
+
+  float vnoise(vec2 p) {
+    vec2 i = floor(p);
+    vec2 f = fract(p);
+    f = f * f * (3.0 - 2.0 * f);
+    float a = hash21(i);
+    float b = hash21(i + vec2(1.0, 0.0));
+    float c = hash21(i + vec2(0.0, 1.0));
+    float d = hash21(i + vec2(1.0, 1.0));
+    return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+  }
+
+  float fbm(vec2 p) {
+    float v = 0.0;
+    float a = 0.55;
+    for (int i = 0; i < 5; i++) {
+      v += a * vnoise(p);
+      p = p * 2.03 + 11.7;
+      a *= 0.5;
+    }
+    return v;
+  }
 
   void main() {
     vec3 dir = normalize(vDir);
     float h = clamp(dir.y * 0.5 + 0.5, 0.0, 1.0);
     vec3 col = mix(bottomColor, topColor, pow(h, 0.8));
+
+    // Луна — с той же стороны, что и невидимое солнце.
+    float md = max(dot(dir, -normalize(sunDir)), 0.0);
+    col += vec3(0.78, 0.82, 0.95) * smoothstep(0.99930, 0.99975, md) * uNight * 1.6;
+    col += vec3(0.35, 0.45, 0.68) * pow(md, 200.0) * 0.4 * uNight;
+
     float d = max(dot(dir, normalize(sunDir)), 0.0);
     col += sunColor * pow(d, 320.0) * 4.0 * sunI;
     col += sunColor * pow(d, 10.0) * 0.22 * sunI;
+
+    // Облака: шум на плоскости, спроецированной на купол.
+    float up = max(dir.y, 0.0);
+    if (up > 0.015) {
+      vec2 uv = dir.xz / (up + 0.17) * 2.0 + vec2(uTime * 0.012, uTime * 0.008);
+      float n = fbm(uv);
+      // Узкая полоса перехода: между облаками остаётся чистое небо.
+      float cover = smoothstep(0.50, 0.78, n) * uCloud * 1.7;
+      cover *= smoothstep(0.015, 0.22, up);
+      vec3 lit = mix(vec3(0.60, 0.64, 0.72), sunColor * 1.35, clamp(sunI * 0.5, 0.0, 1.0));
+      vec3 shade = mix(vec3(0.13, 0.17, 0.27), vec3(0.40, 0.44, 0.53), clamp(sunI * 0.45, 0.0, 1.0));
+      vec3 cloud = mix(shade, lit, smoothstep(0.48, 0.92, n));
+      // Со стороны солнца край облака подсвечен.
+      cloud += sunColor * pow(d, 6.0) * 0.4 * sunI;
+      col = mix(col, cloud, clamp(cover, 0.0, 0.95));
+    }
+
     gl_FragColor = vec4(col, 1.0);
     #include <tonemapping_fragment>
     #include <colorspace_fragment>
@@ -164,18 +219,26 @@ export class Sky {
   private readonly tmp: SkyKey = { ...KEYS[0] };
   private readonly cA = new THREE.Color();
   private readonly cB = new THREE.Color();
+  /** На каком расстоянии держится источник света: зависит от кадра теней. */
+  private readonly sunDistance: number;
 
-  constructor(private readonly scene: THREE.Scene) {
+  constructor(
+    private readonly scene: THREE.Scene,
+    quality: QualitySettings,
+  ) {
     this.uniforms = {
       topColor: { value: new THREE.Color(0x5f9bd6) },
       bottomColor: { value: new THREE.Color(0xcfe2ea) },
       sunColor: { value: new THREE.Color(0xfff3dc) },
       sunDir: { value: new THREE.Vector3(0, 1, 0) },
       sunI: { value: 1 },
+      uTime: { value: 0 },
+      uNight: { value: 0 },
+      uCloud: { value: 0.52 },
     };
 
     this.dome = new THREE.Mesh(
-      new THREE.SphereGeometry(600, 32, 20),
+      new THREE.SphereGeometry(900, 48, 28),
       new THREE.ShaderMaterial({
         uniforms: this.uniforms,
         vertexShader: SKY_VERT,
@@ -196,14 +259,15 @@ export class Sky {
 
     this.sun = new THREE.DirectionalLight(0xfff3dc, 2);
     this.sun.castShadow = true;
-    this.sun.shadow.mapSize.set(2048, 2048);
+    this.sun.shadow.mapSize.set(quality.shadowMap, quality.shadowMap);
+    this.sunDistance = quality.shadowRadius * 2.6;
     const cam = this.sun.shadow.camera;
     cam.near = 1;
-    cam.far = 220;
-    cam.left = -48;
-    cam.right = 48;
-    cam.top = 48;
-    cam.bottom = -48;
+    cam.far = this.sunDistance * 2.2;
+    cam.left = -quality.shadowRadius;
+    cam.right = quality.shadowRadius;
+    cam.top = quality.shadowRadius;
+    cam.bottom = -quality.shadowRadius;
     // Без этого у камеры теней остаётся стандартный кадр 10x10 м,
     // и всё вокруг игрока попадает в ложную тень.
     cam.updateProjectionMatrix();
@@ -218,7 +282,7 @@ export class Sky {
   }
 
   private static buildStars(): THREE.Points {
-    const count = 900;
+    const count = 1800;
     const pos = new Float32Array(count * 3);
     for (let i = 0; i < count; i++) {
       // Только верхняя полусфера — нижнюю всё равно закрывает земля.
@@ -226,9 +290,9 @@ export class Sky {
       const theta = Math.random() * Math.PI * 2;
       const y = 0.05 + u * 0.95;
       const r = Math.sqrt(1 - y * y);
-      pos[i * 3] = Math.cos(theta) * r * 560;
-      pos[i * 3 + 1] = y * 560;
-      pos[i * 3 + 2] = Math.sin(theta) * r * 560;
+      pos[i * 3] = Math.cos(theta) * r * 840;
+      pos[i * 3 + 1] = y * 840;
+      pos[i * 3 + 2] = Math.sin(theta) * r * 840;
     }
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
@@ -246,7 +310,8 @@ export class Sky {
     return points;
   }
 
-  update(t: number, camera: THREE.Camera): void {
+  update(t: number, dt: number, camera: THREE.Camera): void {
+    this.uniforms.uTime.value += dt;
     let i = 0;
     while (i < KEYS.length - 2 && t >= KEYS[i + 1].t) i++;
     const a = KEYS[i];
@@ -263,6 +328,7 @@ export class Sky {
 
     this.uniforms.sunDir.value.set(dir[0], dir[1], dir[2]);
     this.uniforms.sunI.value = above ? this.tmp.sunI : 0.05;
+    this.uniforms.uNight.value = this.tmp.stars;
     this.cA.setHex(a.top);
     this.cB.setHex(b.top);
     this.uniforms.topColor.value.copy(this.cA).lerp(this.cB, u);
@@ -299,7 +365,8 @@ export class Sky {
     const p = camera.position;
     this.dome.position.copy(p);
     this.stars.position.copy(p);
-    this.sun.position.set(p.x + lx * 120, p.y + ly * 120, p.z + lz * 120);
+    const dist = this.sunDistance;
+    this.sun.position.set(p.x + lx * dist, p.y + ly * dist, p.z + lz * dist);
     this.sun.target.position.copy(p);
     this.sun.target.updateMatrixWorld();
     this.scene.matrixWorldNeedsUpdate = true;

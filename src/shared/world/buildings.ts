@@ -114,6 +114,65 @@ export function stallLayout(terrain: Terrain): StallLayout {
   };
 }
 
+export interface CatamaranLayout {
+  x: number;
+  z: number;
+  yaw: number;
+  /** Высота палубы над водой. */
+  deckY: number;
+  /** Точка у кормы, откуда садятся: она на песке. */
+  board: { x: number; z: number };
+  /** Куда садится игрок. */
+  seat: { x: number; y: number; z: number };
+  /** Поплавки как круглые препятствия: сквозь катамаран не пройти. */
+  obstacles: { x: number; z: number; radius: number }[];
+}
+
+/** Длина поплавка, разнос по бортам и высота палубы. */
+export const CATAMARAN = {
+  hullLength: 6.0,
+  hullWidth: 1.1,
+  beam: 1.75,
+  deckY: 0.62,
+} as const;
+
+/**
+ * Прогулочный катамаран у северо-восточного угла озера. Корма вытащена на
+ * песок, нос смотрит к середине озера — сесть можно, не заходя в воду.
+ */
+export function catamaranLayout(): CatamaranLayout {
+  const { x, z, yaw } = WORLD.catamaran;
+  const sin = Math.sin(yaw);
+  const cos = Math.cos(yaw);
+  /** Локальные координаты катамарана в мировые: ось Z — вдоль корпуса, к носу. */
+  const toWorld = (lx: number, lz: number): { x: number; z: number } => ({
+    x: x + lx * cos + lz * sin,
+    z: z - lx * sin + lz * cos,
+  });
+
+  const obstacles: { x: number; z: number; radius: number }[] = [];
+  const half = CATAMARAN.hullLength / 2;
+  for (const side of [-1, 1]) {
+    for (let i = 0; i <= 4; i++) {
+      const lz = -half + (i / 4) * CATAMARAN.hullLength;
+      const p = toWorld(side * CATAMARAN.beam, lz);
+      obstacles.push({ x: p.x, z: p.z, radius: 0.6 });
+    }
+  }
+
+  const board = toWorld(0, -half - 0.4);
+  const seat = toWorld(0, 0.2);
+  return {
+    x,
+    z,
+    yaw,
+    deckY: CATAMARAN.deckY,
+    board,
+    seat: { x: seat.x, y: WORLD.waterLevel + CATAMARAN.deckY, z: seat.z },
+    obstacles,
+  };
+}
+
 /** Костёр между хижиной и ларьком — ориентир на поляне. */
 export function campfirePosition(): { x: number; z: number } {
   return { x: WORLD.clearing.x - 5.5, z: WORLD.clearing.z + 3.5 };

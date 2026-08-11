@@ -92,7 +92,10 @@ import {
   type HutBuild,
   type StallBuild,
 } from './render/structures';
+import { buildCatamaran, type CatamaranBuild } from './render/catamaran';
 import { buildTerrainMesh } from './render/terrainMesh';
+import { PostFx } from './postfx';
+import { currentQuality } from './quality';
 import { ZombieView } from './render/zombies';
 import { Water } from './render/water';
 import { BuildMenu } from './ui/buildMenu';
@@ -111,8 +114,19 @@ const SEAT_EYE = 1.12;
 
 type Slot = 1 | 2 | 3 | 4 | 5 | 6;
 
+/** Куда игрок сел: кресло в хижине или сиденье катамарана. */
+interface SeatSpot {
+  x: number;
+  y: number;
+  z: number;
+  /** У печки время идёт быстрее и раны затягиваются. */
+  stove: boolean;
+}
+
 export class Game {
+  private readonly quality = currentQuality();
   private readonly renderer: THREE.WebGLRenderer;
+  private readonly post: PostFx | null = null;
   private readonly scene = new THREE.Scene();
   private readonly camera: THREE.PerspectiveCamera;
   private readonly input: Input;
@@ -129,6 +143,7 @@ export class Game {
   private readonly hut: HutBuild;
   private readonly stall: StallBuild;
   private readonly campfire: CampfireBuild;
+  private readonly catamaran: CatamaranBuild;
   private readonly chopEffects = new ChopEffects();
   private readonly appleTrees: AppleTreeHandle[] = [];
   private readonly npcs: { buravchik: NpcHandle; tomer: NpcHandle; avi: NpcHandle };
@@ -171,7 +186,7 @@ export class Game {
   private breathSoundTimer = 0;
   private bob = 0;
   private slot: Slot = 1;
-  private seated = false;
+  private seat: SeatSpot | null = null;
   private target: Target | null = null;
   private dying = false;
   private deathTimer = 0;
@@ -191,14 +206,20 @@ export class Game {
   onPause: (() => void) | null = null;
 
   constructor(canvas: HTMLCanvasElement) {
-    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    const q = this.quality;
+    this.renderer = new THREE.WebGLRenderer({
+      canvas,
+      // Сглаживание при постобработке делает буфер, а не холст.
+      antialias: q.samples === 0,
+      powerPreference: 'high-performance',
+    });
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, q.pixelRatio));
     this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = THREE.PCFShadowMap;
+    this.renderer.shadowMap.type = q.shadowMap >= 2048 ? THREE.PCFSoftShadowMap : THREE.PCFShadowMap;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.0;
 
-    this.camera = new THREE.PerspectiveCamera(BASE_FOV, 1, 0.05, 900);
+    this.camera = new THREE.PerspectiveCamera(BASE_FOV, 1, 0.05, q.far);
     this.camera.rotation.order = 'YXZ';
     this.scene.add(this.camera);
 
@@ -206,16 +227,19 @@ export class Game {
     this.player = createPlayerState(this.world);
     this.state = createGameState(this.world.appleTrees.length);
 
-    this.sky = new Sky(this.scene);
-    this.scene.add(buildTerrainMesh(this.world.terrain, this.world.seed));
+    this.sky = new Sky(this.scene, q);
+    this.scene.add(buildTerrainMesh(this.world.terrain, this.world.seed, q.terrainSegments));
 
-    this.forest = new Forest(this.world);
+    this.forest = new Forest(this.world, q);
     this.scene.add(this.forest.group);
     this.scene.add(this.chopEffects.group);
 
-    this.water = new Water();
+    this.water = new Water(q);
     this.scene.add(this.water.mesh);
     this.scene.add(buildSign(this.world.terrain));
+
+    this.catamaran = buildCatamaran(this.world.catamaran);
+    this.scene.add(this.catamaran.group);
 
     this.hut = buildHut(this.world.hut);
     this.stall = buildStall(this.world.stall);
@@ -287,12 +311,14 @@ export class Game {
     this.camera.add(this.flashlight, this.flashlight.target);
 
     const seat = this.world.hut.chairs[1];
+    const board = this.world.catamaran.board;
     this.interactionPoints = {
       buravchik: this.npcs.buravchik.labelPoint,
       tomer: this.npcs.tomer.labelPoint,
       monument: monument.position,
       stove: this.hut.stovePosition,
       chair: new THREE.Vector3(seat.x, this.world.hut.floorY, seat.z),
+      catamaran: new THREE.Vector3(board.x, WORLD.waterLevel, board.z),
       appleTrees: this.appleTrees.map((t) => t.position),
       pebbles: this.world.pebbles.map((p) => new THREE.Vector3(p.x, p.y, p.z)),
       vines: this.wildVines.map((v) => v.position),
@@ -351,11 +377,16 @@ export class Game {
       (window as unknown as { game: Game }).game = this;
     }
 
+    // Постобработка нужна только там, где есть что подсвечивать.
+    if (q.bloom > 0 || q.samples > 0) {
+      this.post = new PostFx(this.renderer, this.scene, this.camera, q);
+    }
+
     window.addEventListener('resize', () => this.resize());
     this.resize();
     this.syncCamera(0);
-    this.sky.update(this.clock.t, this.camera);
-    this.renderer.render(this.scene, this.camera);
+    this.sky.update(this.clock.t, 0, this.camera);
+    this.draw();
     requestAnimationFrame((t) => this.frame(t));
   }
 
@@ -383,8 +414,14 @@ export class Game {
     const w = window.innerWidth;
     const h = window.innerHeight;
     this.renderer.setSize(w, h, false);
+    this.post?.setSize(w, h);
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
+  }
+
+  private draw(): void {
+    if (this.post) this.post.render();
+    else this.renderer.render(this.scene, this.camera);
   }
 
   private breathMax(): number {
@@ -418,7 +455,7 @@ export class Game {
     this.syncCamera(dt);
     this.updateWorld(dt);
     this.updateHud();
-    this.renderer.render(this.scene, this.camera);
+    this.draw();
     this.input.endFrame();
   }
 
@@ -435,9 +472,9 @@ export class Game {
     const strafe = this.input.axis('KeyA', 'KeyD');
     const sprint = this.input.isDown('ShiftLeft') || this.input.isDown('ShiftRight');
 
-    if (this.seated && (forward !== 0 || strafe !== 0)) this.seated = false;
+    if (this.seat && (forward !== 0 || strafe !== 0)) this.seat = null;
 
-    if (!this.seated) {
+    if (!this.seat) {
       const breathMax = this.breathMax();
       this.accumulator += dt;
       let steps = 0;
@@ -469,14 +506,15 @@ export class Game {
     if (this.input.wasPressed('KeyE')) this.interact();
 
     const previousDay = this.clock.day;
-    const scale = this.seated && this.state.world.stoveFuel > 0 ? TIME.stoveTimeScale : 1;
+    const atStove = this.seat?.stove === true;
+    const scale = atStove && this.state.world.stoveFuel > 0 ? TIME.stoveTimeScale : 1;
     advanceClock(this.clock, dt, scale);
     if (this.clock.day !== previousDay) this.newDay();
     this.nightCycle();
     this.updateZombies(dt);
 
     // У горящей печки раны затягиваются сами.
-    if (this.seated && this.state.world.stoveFuel > 0 && this.player.health < PLAYER.maxHealth) {
+    if (atStove && this.state.world.stoveFuel > 0 && this.player.health < PLAYER.maxHealth) {
       this.player.health = Math.min(PLAYER.maxHealth, this.player.health + HEALTH.stoveRegen * dt * scale);
     }
 
@@ -692,12 +730,20 @@ export class Game {
       case 'structure':
         this.useStructure(target.index);
         break;
-      case 'chair':
-        this.seated = true;
+      case 'chair': {
+        const chair = this.world.hut.chairs[1];
+        this.seat = { x: chair.x, y: this.world.hut.floorY, z: chair.z, stove: true };
         this.toasts.push(
           this.state.world.stoveFuel > 0 ? 'Сидишь у печки. Время идёт быстрее' : 'Сидишь. Печь холодная',
         );
         break;
+      }
+      case 'catamaran': {
+        const seat = this.world.catamaran.seat;
+        this.seat = { x: seat.x, y: seat.y, z: seat.z, stove: false };
+        this.toasts.push('Сидишь на катамаране. Плыть, правда, некуда');
+        break;
+      }
       default:
         break;
     }
@@ -826,9 +872,8 @@ export class Game {
   }
 
   private syncCamera(dt: number): void {
-    if (this.seated) {
-      const seat = this.world.hut.chairs[1];
-      this.camera.position.set(seat.x, this.world.hut.floorY + SEAT_EYE, seat.z);
+    if (this.seat) {
+      this.camera.position.set(this.seat.x, this.seat.y + SEAT_EYE, this.seat.z);
       this.camera.rotation.set(this.player.pitch, this.player.yaw, 0);
       return;
     }
@@ -858,8 +903,9 @@ export class Game {
   }
 
   private updateWorld(dt: number): void {
-    this.sky.update(this.clock.t, this.camera);
+    this.sky.update(this.clock.t, dt, this.camera);
     this.forest.update(dt);
+    this.catamaran.update(dt);
     this.placed.sync(this.state.world.structures);
     this.syncVines();
     this.updateGhost();
@@ -869,6 +915,8 @@ export class Game {
     this.npcs.tomer.update(dt);
 
     const night = isDark(this.clock.t);
+    // Ночью свечение сильнее: костёр и фонарь должны бить в глаза.
+    this.post?.setStrength(this.quality.bloom * (night ? 1.5 : 1));
     this.campfire.update(dt, night);
     this.stall.setLamp(night);
     this.hut.setFire(this.state.world.stoveFuel > 0 ? 1 : 0);
@@ -940,7 +988,7 @@ export class Game {
   }
 
   private hintText(): string {
-    if (this.seated) return 'W — встать';
+    if (this.seat) return 'W — встать';
     if (this.target && this.target.distance < INTERACT.npcRange) return this.target.hint;
     if (this.slot === 4) return this.rod.hint();
     if (this.buildMode) return `${BLUEPRINTS[this.buildKind].name}: ЛКМ — поставить`;
@@ -1136,13 +1184,18 @@ export class Game {
     this.player.breath = PLAYER.breathMax;
     this.player.eyeY = this.world.hut.floorY + PLAYER.eyeHeight;
     this.dying = false;
-    this.seated = false;
+    this.seat = null;
     this.cigarette.resetDay();
 
     this.toasts.push(
       `Буравчик дотащил тебя до хижины. Минус ${lost} ₪` + (catchSize > 0 ? ` и весь улов` : ''),
       'bad',
     );
+    saveGame(this.state, this.clock, this.player);
+  }
+
+  /** Сохранить прямо сейчас: нужно перед перезагрузкой страницы. */
+  saveNow(): void {
     saveGame(this.state, this.clock, this.player);
   }
 

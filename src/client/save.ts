@@ -8,7 +8,7 @@ import type { GameState, BoulderState, TreeMutation } from '../shared/state';
 import type { WorldClock } from '../shared/time';
 
 const KEY = 'krugloe-ozero-save';
-const VERSION = 5;
+const VERSION = 6;
 
 interface SaveData {
   version: number;
