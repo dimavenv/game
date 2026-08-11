@@ -38,10 +38,6 @@ export interface WorldData {
   trees: TreeInstance[];
   bushes: PropInstance[];
   rocks: PropInstance[];
-  grass: PropInstance[];
-  /** Мелочь под ногами: одна картинка, но лес перестаёт быть лысым. */
-  ferns: PropInstance[];
-  flowers: PropInstance[];
   /** Яблони: по ним ходят за яблоками для Буравчика. */
   appleTrees: PropInstance[];
   /** Мелкие камешки: подбираются руками. */
@@ -203,10 +199,7 @@ export function generateWorld(seedInput: string | number): WorldData {
     trees,
     bushes: scatter(FOREST.bushes, false, 3),
     rocks: scatter(FOREST.rocks, true, 0.5),
-    grass: scatter(FOREST.grassTufts, false, 1.5),
     pebbles: scatter(STONES.pebbles, true, 0.5),
-    ferns: scatter(FOREST.ferns, false, 2),
-    flowers: scatter(FOREST.flowers, false, 2),
     appleTrees,
     vines,
     monument: {

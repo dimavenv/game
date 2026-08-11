@@ -1,110 +1,55 @@
 import * as THREE from 'three';
-
-export interface HumanColors {
-  skin: number;
-  clothes: number;
-  trousers: number;
-  hat?: number;
-}
+import { buildBody, type BodyColors } from './body';
 
 export type Pose = 'standing' | 'sitting';
 
 /**
- * Гранёный человечек из простых форм — в том же стиле, что и лес.
- * Возвращает группу и функцию покачивания: НПС дышит и слегка переминается.
+ * Живой человечек: собранная фигура плюс покачивание — дышит, переминается,
+ * поводит головой. Сидящая поза складывает бёдра и голени и откидывает спину.
  */
-export function buildHuman(colors: HumanColors, pose: Pose): { group: THREE.Group; update(dt: number): void } {
-  const group = new THREE.Group();
-  const mat = (hex: number) =>
-    new THREE.MeshStandardMaterial({ color: hex, roughness: 0.95, flatShading: true });
+export function buildHuman(
+  colors: BodyColors,
+  pose: Pose,
+): { group: THREE.Group; update(dt: number): void } {
+  const rig = buildBody(colors);
+  const { group, hips, chest, neck, shoulders, elbows, thighs, knees } = rig;
 
-  const skin = mat(colors.skin);
-  const cloth = mat(colors.clothes);
-  const trousers = mat(colors.trousers);
-
-  const torso = new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.62, 0.28), cloth);
-  const head = new THREE.Mesh(new THREE.IcosahedronGeometry(0.15, 0), skin);
-  const arms = new THREE.Group();
-  const legs = new THREE.Group();
-
-  const armGeo = new THREE.BoxGeometry(0.12, 0.52, 0.14);
-  const legGeo = new THREE.BoxGeometry(0.16, 0.6, 0.18);
-
-  const leftArm = new THREE.Mesh(armGeo, cloth);
-  const rightArm = new THREE.Mesh(armGeo, cloth);
-  const leftLeg = new THREE.Mesh(legGeo, trousers);
-  const rightLeg = new THREE.Mesh(legGeo, trousers);
-  arms.add(leftArm, rightArm);
-  legs.add(leftLeg, rightLeg);
-
-  if (pose === 'standing') {
-    legs.position.y = 0.3;
-    leftLeg.position.set(-0.12, 0, 0);
-    rightLeg.position.set(0.12, 0, 0);
-    torso.position.y = 0.91;
-    head.position.y = 1.34;
-    leftArm.position.set(-0.29, 0.94, 0.02);
-    rightArm.position.set(0.29, 0.94, 0.02);
-    leftArm.rotation.z = 0.12;
-    rightArm.rotation.z = -0.12;
+  if (pose === 'sitting') {
+    hips.position.y = 0.5;
+    for (let i = 0; i < 2; i++) {
+      thighs[i].rotation.x = -Math.PI / 2 + 0.12;
+      knees[i].rotation.x = Math.PI / 2 - 0.22;
+      shoulders[i].rotation.x = -0.42;
+      elbows[i].rotation.x = -0.55;
+    }
+    shoulders[0].rotation.z = 0.16;
+    shoulders[1].rotation.z = -0.16;
+    chest.rotation.x = -0.14;
   } else {
-    // Сидит: бёдра вперёд, голени вниз, спина откинута.
-    leftLeg.position.set(-0.12, 0.42, 0.26);
-    rightLeg.position.set(0.12, 0.42, 0.26);
-    leftLeg.rotation.x = Math.PI / 2;
-    rightLeg.rotation.x = Math.PI / 2;
-
-    const shinGeo = new THREE.BoxGeometry(0.15, 0.46, 0.16);
-    for (const dx of [-0.12, 0.12]) {
-      const shin = new THREE.Mesh(shinGeo, trousers);
-      shin.position.set(dx, 0.23, 0.52);
-      legs.add(shin);
-    }
-
-    torso.position.set(0, 0.75, 0.02);
-    torso.rotation.x = -0.16;
-    head.position.set(0, 1.16, 0.06);
-    leftArm.position.set(-0.29, 0.74, 0.12);
-    rightArm.position.set(0.29, 0.74, 0.12);
-    leftArm.rotation.x = -0.5;
-    rightArm.rotation.x = -0.5;
+    for (let i = 0; i < 2; i++) elbows[i].rotation.x = -0.22;
+    shoulders[0].rotation.z = 0.1;
+    shoulders[1].rotation.z = -0.1;
   }
 
-  group.add(torso, head, arms, legs);
-
-  if (colors.hat !== undefined) {
-    const hat = new THREE.Mesh(new THREE.CylinderGeometry(0.17, 0.18, 0.1, 7), mat(colors.hat));
-    hat.position.copy(head.position);
-    hat.position.y += 0.13;
-    const brim = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.03, 0.2), mat(colors.hat));
-    brim.position.copy(hat.position);
-    brim.position.y -= 0.04;
-    brim.position.z += 0.14;
-    group.add(hat, brim);
-  }
-
-  group.traverse((o) => {
-    if (o instanceof THREE.Mesh) {
-      o.castShadow = true;
-      o.receiveShadow = true;
-    }
-  });
+  const base = {
+    hipsY: hips.position.y,
+    chestX: chest.rotation.x,
+    left: shoulders[0].rotation.x,
+    right: shoulders[1].rotation.x,
+  };
 
   let phase = Math.random() * 10;
-  const baseY = torso.position.y;
-  const baseHeadY = head.position.y;
-
   return {
     group,
     update(dt: number) {
       phase += dt;
-      const breath = Math.sin(phase * 1.3) * 0.012;
-      torso.position.y = baseY + breath;
-      head.position.y = baseHeadY + breath * 1.4;
-      if (pose === 'standing') {
-        leftArm.rotation.x = Math.sin(phase * 0.9) * 0.05;
-        rightArm.rotation.x = -Math.sin(phase * 0.9) * 0.05;
-      }
+      const breath = Math.sin(phase * 1.25);
+      hips.position.y = base.hipsY + breath * 0.008;
+      chest.rotation.x = base.chestX + breath * 0.02;
+      neck.rotation.y = Math.sin(phase * 0.31) * 0.22;
+      neck.rotation.z = Math.sin(phase * 0.23) * 0.05;
+      shoulders[0].rotation.x = base.left + Math.sin(phase * 0.8) * 0.05;
+      shoulders[1].rotation.x = base.right - Math.sin(phase * 0.8) * 0.05;
     },
   };
 }
@@ -116,6 +61,36 @@ export interface NpcHandle {
   update(dt: number): void;
 }
 
+const LOOKS: Record<'buravchik' | 'tomer' | 'avi', BodyColors> = {
+  // Буравчик: борода лопатой, кепка, что-то защитного цвета.
+  buravchik: {
+    skin: 0xc79a72,
+    cloth: 0x3f4a33,
+    trousers: 0x2f3a44,
+    shoes: 0x2e2a24,
+    hat: 0x4a4436,
+    beard: 0x5a4632,
+  },
+  // Томер: светлая рубаха торговца и чёрные вихры.
+  tomer: {
+    skin: 0xc08f5e,
+    cloth: 0xc9c0a4,
+    trousers: 0x59544a,
+    shoes: 0x40382e,
+    hair: 0x2a231c,
+    beard: 0x33291f,
+  },
+  // Ави: тот же типаж, что у брата, но весь в тёмном и под капюшоном.
+  avi: {
+    skin: 0xb98553,
+    cloth: 0x2b2f36,
+    trousers: 0x24272c,
+    shoes: 0x1c1a18,
+    hood: 0x1f2226,
+    beard: 0x2b2319,
+  },
+};
+
 export function createNpc(
   name: 'buravchik' | 'tomer' | 'avi',
   x: number,
@@ -123,19 +98,12 @@ export function createNpc(
   z: number,
   rotation: number,
 ): NpcHandle {
-  let built;
-  if (name === 'buravchik') {
-    built = buildHuman({ skin: 0xc79a72, clothes: 0x3f4a33, trousers: 0x2f3a44, hat: 0x4a4436 }, 'sitting');
-  } else if (name === 'avi') {
-    // Тот же типаж, что у брата, но в тёмном и в капюшоне.
-    built = buildHuman({ skin: 0xb98553, clothes: 0x2b2f36, trousers: 0x24272c, hat: 0x1f2226 }, 'standing');
-  } else {
-    built = buildHuman({ skin: 0xb98553, clothes: 0xc9c0a4, trousers: 0x59544a }, 'standing');
-  }
+  const pose: Pose = name === 'buravchik' ? 'sitting' : 'standing';
+  const built = buildHuman(LOOKS[name], pose);
 
   built.group.position.set(x, y, z);
   built.group.rotation.y = rotation;
 
-  const labelPoint = new THREE.Vector3(x, y + (name === 'buravchik' ? 1.45 : 1.62), z);
+  const labelPoint = new THREE.Vector3(x, y + (pose === 'sitting' ? 1.42 : 1.9), z);
   return { group: built.group, labelPoint, update: built.update };
 }

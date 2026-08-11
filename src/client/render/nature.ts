@@ -21,6 +21,31 @@ function merge(parts: THREE.BufferGeometry[]): THREE.BufferGeometry {
   return geo;
 }
 
+/** Градиент по высоте: низ кроны в тени, верх ловит солнце. */
+function gradient(geo: THREE.BufferGeometry, bottomHex: number, topHex: number): THREE.BufferGeometry {
+  const pos = geo.attributes.position as THREE.BufferAttribute;
+  let min = Infinity;
+  let max = -Infinity;
+  for (let i = 0; i < pos.count; i++) {
+    const y = pos.getY(i);
+    if (y < min) min = y;
+    if (y > max) max = y;
+  }
+  const span = Math.max(max - min, 0.0001);
+  const arr = new Float32Array(pos.count * 3);
+  const a = new THREE.Color(bottomHex);
+  const b = new THREE.Color(topHex);
+  const c = new THREE.Color();
+  for (let i = 0; i < pos.count; i++) {
+    c.copy(a).lerp(b, (pos.getY(i) - min) / span);
+    arr[i * 3] = c.r;
+    arr[i * 3 + 1] = c.g;
+    arr[i * 3 + 2] = c.b;
+  }
+  geo.setAttribute('color', new THREE.BufferAttribute(arr, 3));
+  return geo;
+}
+
 const NATURE_MATERIAL = () =>
   new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: true, roughness: 0.95 });
 
@@ -42,16 +67,28 @@ export function buildAppleTree(prop: PropInstance): AppleTreeHandle {
 
   // Крона: несколько шапок. Их же положения задают, где висеть яблокам.
   const canopy: [number, number, number, number][] = [
-    [0, 2.9, 0, 1.5],
-    [0.95, 2.5, 0.35, 1.0],
-    [-0.85, 2.55, -0.5, 1.05],
-    [0.15, 2.35, -0.95, 0.85],
+    [0, 3.0, 0, 1.55],
+    [0.95, 2.5, 0.35, 1.05],
+    [-0.85, 2.55, -0.5, 1.1],
+    [0.15, 2.35, -0.95, 0.9],
+    [-0.35, 3.3, 0.6, 0.8],
   ];
   for (const [bx, by, bz, r] of canopy) {
     const blob = new THREE.IcosahedronGeometry(r, 0);
     blob.scale(1, 0.8, 1);
     blob.translate(bx, by, bz);
-    parts.push(tint(blob, 0x4a7333));
+    parts.push(gradient(blob, 0x2f4d21, 0x6b9440));
+  }
+
+  // Пара скелетных веток от ствола к кроне.
+  for (const [bx, by, bz] of canopy.slice(1)) {
+    const len = Math.hypot(bx, bz) + 0.5;
+    const branch = new THREE.CylinderGeometry(0.05, 0.08, len, 5);
+    branch.translate(0, len / 2, 0);
+    branch.rotateZ(-Math.atan2(bx, 1.1));
+    branch.rotateY(Math.atan2(bz, bx) * 0.0);
+    branch.translate(0, by - len * 0.75, bz * 0.5);
+    parts.push(tint(branch, 0x53402d));
   }
 
   const crown = new THREE.Mesh(merge(parts), NATURE_MATERIAL());

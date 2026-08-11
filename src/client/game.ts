@@ -78,6 +78,7 @@ import { clearSave, loadGame, saveGame } from './save';
 import { Interactions, type InteractionPoints, type Target } from './interaction';
 import { createNpc, type NpcHandle } from './render/characters';
 import { Forest, TREE_HEIGHT } from './render/forest';
+import { GroundCover } from './render/groundcover';
 import { buildAppleTree, buildMonument, ChopEffects, type AppleTreeHandle } from './render/nature';
 import { PlacedStructures } from './render/placed';
 import { buildVine, buildWildVine, type VineHandle } from './render/vines';
@@ -139,6 +140,7 @@ export class Game {
   private readonly sky: Sky;
   private readonly water: Water;
   private readonly forest: Forest;
+  private readonly cover: GroundCover;
   private readonly smoke: Smoke;
   private readonly hut: HutBuild;
   private readonly stall: StallBuild;
@@ -232,6 +234,8 @@ export class Game {
 
     this.forest = new Forest(this.world, q);
     this.scene.add(this.forest.group);
+    this.cover = new GroundCover(this.world, q);
+    this.scene.add(this.cover.group);
     this.scene.add(this.chopEffects.group);
 
     this.water = new Water(q);
@@ -270,7 +274,7 @@ export class Game {
     // Буравчик сидит в своём кресле, Томер стоит за прилавком.
     const chair = this.world.hut.chairs[0];
     this.npcs = {
-      buravchik: createNpc('buravchik', chair.x, this.world.hut.floorY + 0.45, chair.z, Math.PI * 1.1),
+      buravchik: createNpc('buravchik', chair.x, this.world.hut.floorY, chair.z, Math.PI * 1.1),
       tomer: createNpc(
         'tomer',
         this.world.stall.keeper.x,
@@ -305,7 +309,7 @@ export class Game {
     this.player.eyeY = this.world.terrain.height(this.player.x, this.player.z) + PLAYER.eyeHeight;
     this.restoreWorldVisuals();
 
-    this.flashlight = new THREE.SpotLight(0xfff2d8, 0, 42, 0.44, 0.45, 1.1);
+    this.flashlight = new THREE.SpotLight(0xfff2d8, 0, 46, 0.42, 0.82, 1.15);
     this.flashlight.position.set(0.12, -0.06, 0);
     this.flashlight.target.position.set(0, -0.05, -1);
     this.camera.add(this.flashlight, this.flashlight.target);
@@ -385,6 +389,7 @@ export class Game {
     window.addEventListener('resize', () => this.resize());
     this.resize();
     this.syncCamera(0);
+    this.cover.update(0, this.player.x, this.player.z);
     this.sky.update(this.clock.t, 0, this.camera);
     this.draw();
     requestAnimationFrame((t) => this.frame(t));
@@ -905,6 +910,8 @@ export class Game {
   private updateWorld(dt: number): void {
     this.sky.update(this.clock.t, dt, this.camera);
     this.forest.update(dt);
+    // Покров едет за камерой: в кресле и на катамаране она уходит от игрока.
+    this.cover.update(dt, this.camera.position.x, this.camera.position.z);
     this.catamaran.update(dt);
     this.placed.sync(this.state.world.structures);
     this.syncVines();

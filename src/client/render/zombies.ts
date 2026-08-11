@@ -1,89 +1,51 @@
 import * as THREE from 'three';
 import type { Zombie } from '../../shared/zombies';
+import { buildBody, type BodyRig } from './body';
 
-interface ZombieRig {
-  group: THREE.Group;
-  torso: THREE.Mesh;
-  head: THREE.Mesh;
-  arms: THREE.Group;
-  legs: [THREE.Mesh, THREE.Mesh];
-}
-
-const SKIN = [0x6f7d5e, 0x77805c, 0x5f6e55];
-const RAGS = [0x3a3a34, 0x44403a, 0x2f3630];
+const SKIN = [0x7c8a68, 0x869063, 0x6b7a5e, 0x91976a];
+const RAGS = [0x3a3a34, 0x44403a, 0x2f3630, 0x4a4238];
+const TROUSERS = [0x2c2f2a, 0x36322c, 0x25282a];
+const HAIR = [0x2a251d, 0x3a3128, 0x1d1a16];
 
 /**
- * Стая мертвецов: пул готовых фигур, которые просто прячутся,
- * когда ночь заканчивается. Ковыляют, тянут руки, оседают после смерти.
+ * Стая мертвецов: пул готовых фигур, которые просто прячутся, когда ночь
+ * заканчивается. Ковыляют вразвалку, тянут руки, оседают после смерти.
  */
 export class ZombieView {
   readonly group = new THREE.Group();
-  private readonly rigs: ZombieRig[] = [];
+  private readonly rigs: BodyRig[] = [];
 
   constructor(max: number) {
     for (let i = 0; i < max; i++) {
-      const rig = ZombieView.buildRig(i);
+      const rig = buildBody(
+        {
+          skin: SKIN[i % SKIN.length],
+          cloth: RAGS[i % RAGS.length],
+          trousers: TROUSERS[i % TROUSERS.length],
+          shoes: 0x22201c,
+          hair: HAIR[i % HAIR.length],
+        },
+        // Мертвецы разного роста — так толпа не выглядит строем клонов.
+        { hunched: true, scale: 0.94 + ((i * 37) % 17) / 100 },
+      );
+      // Руки вытянуты вперёд и висят.
+      for (let s = 0; s < 2; s++) {
+        rig.shoulders[s].rotation.x = -1.15;
+        rig.elbows[s].rotation.x = -0.35;
+      }
+      rig.shoulders[0].rotation.z = 0.18;
+      rig.shoulders[1].rotation.z = -0.24;
       rig.group.visible = false;
       this.group.add(rig.group);
       this.rigs.push(rig);
     }
   }
 
-  private static buildRig(index: number): ZombieRig {
-    const group = new THREE.Group();
-    const skin = new THREE.MeshStandardMaterial({
-      color: SKIN[index % SKIN.length],
-      roughness: 1,
-      flatShading: true,
-    });
-    const rags = new THREE.MeshStandardMaterial({
-      color: RAGS[index % RAGS.length],
-      roughness: 1,
-      flatShading: true,
-    });
-
-    const torso = new THREE.Mesh(new THREE.BoxGeometry(0.44, 0.6, 0.26), rags);
-    torso.position.y = 0.98;
-    // Сутулость: мертвец наклонён вперёд.
-    torso.rotation.x = 0.22;
-
-    const head = new THREE.Mesh(new THREE.IcosahedronGeometry(0.15, 0), skin);
-    head.position.set(0, 1.36, 0.1);
-
-    const arms = new THREE.Group();
-    const armGeo = new THREE.BoxGeometry(0.11, 0.5, 0.12);
-    for (const dx of [-0.28, 0.28]) {
-      const arm = new THREE.Mesh(armGeo, skin);
-      arm.position.set(dx, 1.02, 0.22);
-      // Руки вытянуты вперёд.
-      arm.rotation.x = -1.25;
-      arms.add(arm);
-    }
-
-    const legGeo = new THREE.BoxGeometry(0.15, 0.62, 0.17);
-    const left = new THREE.Mesh(legGeo, rags);
-    const right = new THREE.Mesh(legGeo, rags);
-    left.position.set(-0.12, 0.33, 0);
-    right.position.set(0.12, 0.33, 0);
-
-    group.add(torso, head, arms, left, right);
-    group.traverse((o) => {
-      if (o instanceof THREE.Mesh) o.castShadow = true;
-    });
-
-    return { group, torso, head, arms, legs: [left, right] };
-  }
-
   sync(zombies: Zombie[]): void {
     for (let i = 0; i < this.rigs.length; i++) {
       const rig = this.rigs[i];
       const z = zombies[i];
-      if (!z) {
-        rig.group.visible = false;
-        continue;
-      }
-
-      if (z.state === 'dying' && z.deadFor > 4) {
+      if (!z || (z.state === 'dying' && z.deadFor > 4)) {
         rig.group.visible = false;
         continue;
       }
@@ -103,13 +65,21 @@ export class ZombieView {
       rig.group.rotation.x = 0;
       const speed = z.state === 'chase' || z.state === 'attack' ? 3.2 : 1.1;
       const swing = Math.sin(z.phase * speed);
-      rig.legs[0].rotation.x = swing * 0.5;
-      rig.legs[1].rotation.x = -swing * 0.5;
-      rig.torso.rotation.z = swing * 0.06;
-      rig.arms.rotation.x = Math.sin(z.phase * speed * 0.5) * 0.12;
-      rig.head.rotation.z = Math.sin(z.phase * 0.7) * 0.1;
-      // При ударе дёргается вперёд.
-      if (z.state === 'attack') rig.arms.rotation.x -= 0.35;
+      const lift = Math.max(0, swing);
+
+      rig.thighs[0].rotation.x = swing * 0.62;
+      rig.thighs[1].rotation.x = -swing * 0.62;
+      // Колено подгибается только на подъёме — иначе нога едет по земле.
+      rig.knees[0].rotation.x = -lift * 0.7;
+      rig.knees[1].rotation.x = -Math.max(0, -swing) * 0.7;
+      rig.hips.rotation.z = swing * 0.05;
+      rig.chest.rotation.z = -swing * 0.07;
+      rig.head.rotation.z = Math.sin(z.phase * 0.7) * 0.12;
+      rig.neck.rotation.y = Math.sin(z.phase * 0.5) * 0.18;
+
+      const reach = z.state === 'attack' ? -0.4 : 0;
+      rig.shoulders[0].rotation.x = -1.15 + reach + Math.sin(z.phase * speed * 0.5) * 0.12;
+      rig.shoulders[1].rotation.x = -1.15 + reach - Math.sin(z.phase * speed * 0.5) * 0.12;
     }
   }
 }
