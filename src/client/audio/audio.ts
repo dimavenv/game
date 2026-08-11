@@ -334,6 +334,31 @@ export class GameAudio {
     this.burst({ duration: 0.22, attack: 0.02, gain: 0.2, type: 'highpass', freq: 2600, freqTo: 900, q: 1.2 });
   }
 
+  /** Скрип двери: тон плывёт вверх на открытии и вниз на закрытии. */
+  doorCreak(opening: boolean): void {
+    if (this.playSlot('door_creak')) return;
+    const ctx = this.ctx;
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(opening ? 210 : 260, now);
+    osc.frequency.exponentialRampToValueAtTime(opening ? 320 : 165, now + 0.55);
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'bandpass';
+    filter.frequency.value = 900;
+    filter.Q.value = 6;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, now);
+    g.gain.linearRampToValueAtTime(0.035, now + 0.08);
+    g.gain.exponentialRampToValueAtTime(0.0001, now + 0.6);
+    osc.connect(filter).connect(g).connect(this.muffle);
+    osc.start(now);
+    osc.stop(now + 0.62);
+    // Стук щеколды в конце хода.
+    window.setTimeout(() => this.blip(120, 0.05, 0.06, 'triangle'), opening ? 520 : 460);
+  }
+
   bandage(): void {
     this.burst({ duration: 0.5, attack: 0.2, gain: 0.09, type: 'highpass', freq: 2400 });
   }

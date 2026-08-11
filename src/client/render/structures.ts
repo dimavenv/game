@@ -29,6 +29,53 @@ function box(w: number, h: number, d: number, hex: number, x: number, y: number,
 
 const LOG_RADIUS = 0.155;
 const LOG_STEP = 0.29;
+/** Высота дверного полотна: над ним остаётся перемычка до верхнего венца. */
+const DOOR_HEIGHT = 2.05;
+/** На сколько распахивается дверь и как быстро ходит. */
+const DOOR_ANGLE = -1.62;
+const DOOR_SPEED = 2.6;
+
+/**
+ * Дверь: полотно из плах на петлях. Висит на своей группе, а не в общей
+ * склейке, иначе её не повернуть.
+ */
+function buildDoor(hut: HutLayout): { pivot: THREE.Group } {
+  const pivot = new THREE.Group();
+  // Петли на северном косяке, полотно уходит от него вдоль +Z.
+  pivot.position.set(hut.door.x, hut.floorY + 0.12, hut.door.z - hut.door.width / 2 + 0.04);
+
+  const width = hut.door.width - 0.1;
+  const parts: THREE.BufferGeometry[] = [];
+
+  // Пять вертикальных плах с щелями между ними.
+  const planks = 5;
+  const plank = width / planks;
+  for (let i = 0; i < planks; i++) {
+    const z = plank * (i + 0.5);
+    parts.push(box(0.06, DOOR_HEIGHT, plank - 0.012, i % 2 === 0 ? 0x6a5134 : 0x74593a, 0, DOOR_HEIGHT / 2, z));
+  }
+  // Поперечины и косая: без них полотно выглядит фанерой.
+  for (const y of [0.28, DOOR_HEIGHT - 0.28]) {
+    parts.push(box(0.035, 0.14, width - 0.04, 0x54402a, 0.045, y, width / 2));
+  }
+  const brace = new THREE.BoxGeometry(0.035, 0.13, Math.hypot(width, DOOR_HEIGHT - 0.56) - 0.1);
+  brace.rotateX(Math.atan2(DOOR_HEIGHT - 0.56, width) - Math.PI / 2);
+  brace.translate(0.045, DOOR_HEIGHT / 2, width / 2);
+  parts.push(tint(brace, 0x54402a));
+
+  const iron = 0x33302b;
+  for (const y of [0.34, DOOR_HEIGHT - 0.34]) {
+    parts.push(box(0.075, 0.07, 0.34, iron, 0, y, 0.16));
+  }
+  // Скоба-ручка у свободного края.
+  parts.push(box(0.045, 0.05, 0.16, iron, -0.06, 1.05, width - 0.16));
+
+  const mesh = new THREE.Mesh(merge(parts), WOOD_MATERIAL());
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+  pivot.add(mesh);
+  return { pivot };
+}
 
 /** Сколько венцов уходит на стену и на какой высоте окажется её верх. */
 function logRows(height: number): { rows: number; top: number } {
@@ -89,6 +136,11 @@ export interface HutBuild {
   /** Мировая точка, куда садится игрок во втором кресле. */
   seat: THREE.Vector3;
   stovePosition: THREE.Vector3;
+  /**
+   * Ведёт дверь: она сама распахивается перед подошедшим и закрывается за
+   * ним. Возвращает момент, когда полотно тронулось, — под скрип.
+   */
+  updateDoor(dt: number, open: boolean): 'opening' | 'closing' | null;
 }
 
 export function buildHut(hut: HutLayout): HutBuild {
@@ -114,10 +166,21 @@ export function buildHut(hut: HutLayout): HutBuild {
     parts.push(gable(hut.x + dir * (hut.width / 2), eave - 0.05, hut.z, hut.depth / 2, 1.2, 0x6d5334));
   }
 
-  // Дверной проём: косяки и порог.
+  // Дверной проём: косяки, порог и перемычка над полотном.
   parts.push(box(0.34, hut.wallHeight, 0.16, 0x5b452c, hut.door.x, y + hut.wallHeight / 2, hut.door.z - hut.door.width / 2));
   parts.push(box(0.34, hut.wallHeight, 0.16, 0x5b452c, hut.door.x, y + hut.wallHeight / 2, hut.door.z + hut.door.width / 2));
   parts.push(box(0.34, 0.12, hut.door.width, 0x4a3826, hut.door.x, y + 0.06, hut.door.z));
+  parts.push(
+    box(
+      0.34,
+      hut.wallHeight - DOOR_HEIGHT - 0.12,
+      hut.door.width,
+      0x5b452c,
+      hut.door.x,
+      y + 0.12 + DOOR_HEIGHT + (hut.wallHeight - DOOR_HEIGHT - 0.12) / 2,
+      hut.door.z,
+    ),
+  );
 
   // Печка: кирпичный короб и труба сквозь крышу.
   parts.push(box(1.1, 1.35, 1.1, 0x6b4034, hut.stove.x, y + 0.68, hut.stove.z));
@@ -159,11 +222,26 @@ export function buildHut(hut: HutLayout): HutBuild {
   daylight.position.set(hut.door.x + 0.35, y + 1.9, hut.door.z);
   group.add(daylight);
 
+  const door = buildDoor(hut);
+  group.add(door.pivot);
+
   let phase = 0;
+  let doorAngle = 0;
+  let doorWasOpen = false;
   return {
     group,
     seat: new THREE.Vector3(hut.chairs[1].x, y, hut.chairs[1].z),
     stovePosition: new THREE.Vector3(hut.stove.x, y + 0.7, hut.stove.z),
+    updateDoor(dt: number, open: boolean) {
+      const target = open ? DOOR_ANGLE : 0;
+      const step = DOOR_SPEED * dt * (open ? 1 : 0.7);
+      const delta = target - doorAngle;
+      doorAngle += Math.sign(delta) * Math.min(Math.abs(delta), step);
+      door.pivot.rotation.y = doorAngle;
+      if (open === doorWasOpen) return null;
+      doorWasOpen = open;
+      return open ? 'opening' : 'closing';
+    },
     setDaylight(intensity: number) {
       daylight.intensity = intensity * 3.5;
     },

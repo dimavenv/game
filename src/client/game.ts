@@ -72,6 +72,7 @@ import { Input } from './input';
 import { AxeItem } from './items/axe';
 import { HammerItem } from './items/hammer';
 import { CigaretteItem } from './items/cigarette';
+import { DrugKit } from './items/drugkit';
 import { RodItem } from './items/rod';
 import { ShotgunItem } from './items/shotgun';
 import { clearSave, loadGame, saveGame } from './save';
@@ -158,6 +159,7 @@ export class Game {
   private readonly rod: RodItem;
   private readonly shotgun: ShotgunItem;
   private readonly hammer: HammerItem;
+  private readonly drugKit: DrugKit;
   private readonly placed = new PlacedStructures();
   private readonly inventoryScreen = new InventoryScreen();
   private readonly buildMenu = new BuildMenu();
@@ -300,6 +302,7 @@ export class Game {
     this.rod = new RodItem(this.camera, this.scene, this.audio, this.rng);
     this.shotgun = new ShotgunItem(this.camera);
     this.hammer = new HammerItem(this.camera);
+    this.drugKit = new DrugKit(this.camera, this.audio, this.smoke);
     this.scene.add(this.zombieView.group);
     this.scene.add(this.placed.group);
     for (const rock of this.world.rocks) this.rockPoints.push(new THREE.Vector3(rock.x, rock.y, rock.z));
@@ -451,6 +454,7 @@ export class Game {
     }
     this.simulate(dt);
     this.cigarette.update(dt, this.camera);
+    this.drugKit.update(dt);
     if (this.axe.update(dt)) this.applyAxeHit();
     if (this.hammer.update(dt)) this.applyHammerHit();
     if (this.shotgun.update(dt) === 'reload-done') this.finishReload();
@@ -542,6 +546,16 @@ export class Game {
 
   private handleSlots(): void {
     const inv = this.state.inventory;
+    // Пока руки заняты дозой, всё остальное убрано и не переключается.
+    if (this.state.effects.using) {
+      this.cigarette.setHidden(true);
+      this.axe.setVisible(false);
+      this.rod.setVisible(false);
+      this.shotgun.setVisible(false);
+      this.hammer.setVisible(false);
+      this.flashlight.intensity = 0;
+      return;
+    }
     const pick = (slot: Slot, available: boolean, denial: string): void => {
       if (!available) {
         this.toasts.push(denial, 'bad');
@@ -575,7 +589,7 @@ export class Game {
 
   /** ЛКМ: у каждого предмета своё действие. */
   private useItem(): void {
-    if (this.dying) return;
+    if (this.dying || this.state.effects.using) return;
     if (this.buildMode) {
       this.placeStructure();
       return;
@@ -901,8 +915,21 @@ export class Game {
       Math.sin(this.bob) * 0.012 * amp,
     );
 
+    // Сценарий употребления ведёт камеру сам: наклон, крен, дрожь.
+    if (this.drugKit.active) {
+      const kit = this.drugKit;
+      this.camera.position.y += kit.lift.value;
+      this.camera.rotation.x += kit.pitch + (Math.random() - 0.5) * kit.shake;
+      this.camera.rotation.y += (Math.random() - 0.5) * kit.shake;
+      this.camera.rotation.z += kit.roll;
+    }
+
     const targetFov =
-      BASE_FOV + this.cigarette.fovOffset + drugFov(this.state.effects) + (this.player.sprinting ? 3.5 : 0);
+      BASE_FOV +
+      this.cigarette.fovOffset +
+      drugFov(this.state.effects) +
+      this.drugKit.fov +
+      (this.player.sprinting ? 3.5 : 0);
     this.camera.fov += (targetFov - this.camera.fov) * Math.min(1, 6 * dt);
     this.camera.updateProjectionMatrix();
   }
@@ -920,6 +947,13 @@ export class Game {
     this.chopEffects.update(dt);
     this.npcs.buravchik.update(dt);
     this.npcs.tomer.update(dt);
+
+    // Дверь хижины сама распахивается перед подошедшим.
+    const door = this.world.hut.door;
+    const atDoor =
+      Math.hypot(this.camera.position.x - door.x, this.camera.position.z - door.z) < INTERACT.range;
+    const doorEvent = this.hut.updateDoor(dt, atDoor);
+    if (doorEvent) this.audio.doorCreak(doorEvent === 'opening');
 
     const night = isDark(this.clock.t);
     // Ночью свечение сильнее: костёр и фонарь должны бить в глаза.
@@ -995,6 +1029,7 @@ export class Game {
   }
 
   private hintText(): string {
+    if (this.drugKit.active) return this.drugKit.hint;
     if (this.seat) return 'W — встать';
     if (this.target && this.target.distance < INTERACT.npcRange) return this.target.hint;
     if (this.slot === 4) return this.rod.hint();
@@ -1142,6 +1177,8 @@ export class Game {
 
   private takeDamage(amount: number): void {
     const effects = this.state.effects;
+    // Под ударом не поколешься: доза теряется.
+    if (effects.using) this.interruptDrug();
     if (drugDefersPain(effects)) {
       // Боль не чувствуется — она копится и прилетит, когда отпустит.
       effects.painDebt += amount;
@@ -1609,6 +1646,7 @@ export class Game {
         effects.using = null;
         effects.active = { drug, time: spec.duration };
         effects.painDebt = 0;
+        this.drugKit.cancel();
         this.audio.breath(true);
         this.toasts.push(`${spec.name[0].toUpperCase()}${spec.name.slice(1)} пошёл. Расплата будет к утру`, 'bad');
       }
@@ -1644,16 +1682,18 @@ export class Game {
     if (removeItem(this.state.inventory, spec.item, 1) <= 0) return;
 
     effects.using = { drug, time: spec.useTime };
+    // Рюкзак закрывается: всё интересное происходит в руках, а не в сетке.
+    if (this.inventoryScreen.isOpen) this.inventoryScreen.close();
+    this.drugKit.start(drug);
     this.toasts.push(spec.useText);
-    if (this.audio.playSlot(`drug_${drug}`)) return;
-    if (drug === 'cocaine') {
-      this.audio.burstSniff();
-    } else if (drug === 'hash') {
-      this.audio.lighter();
-      this.audio.inhale(spec.useTime * 0.7);
-    } else {
-      this.audio.breath(true);
-    }
+  }
+
+  /** Сбили на середине: доза потеряна, руки пусты. */
+  private interruptDrug(): void {
+    if (!this.state.effects.using) return;
+    this.state.effects.using = null;
+    this.drugKit.cancel();
+    this.toasts.push('Сбили. Всё просыпалось', 'bad');
   }
 
   private updateHud(): void {

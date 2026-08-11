@@ -48,8 +48,8 @@ export const DRUGS: Record<DrugId, DrugSpec> = {
     item: 'cocaine',
     name: 'кокаин',
     price: 160,
-    useTime: 0.8,
-    useText: 'Дорожка. Быстро и мерзко',
+    useTime: 5.0,
+    useText: 'Зеркальце, карточка, трубочка',
     duration: 45,
     speed: 1.35,
     damage: 1.6,
@@ -70,8 +70,8 @@ export const DRUGS: Record<DrugId, DrugSpec> = {
     item: 'hash',
     name: 'гашиш',
     price: 90,
-    useTime: 2.8,
-    useText: 'Забиваешь и раскуриваешь',
+    useTime: 7.5,
+    useText: 'Крошишь, скручиваешь, раскуриваешь',
     duration: 110,
     speed: 0.82,
     damage: 0.9,
@@ -92,8 +92,8 @@ export const DRUGS: Record<DrugId, DrugSpec> = {
     item: 'heroin',
     name: 'героин',
     price: 220,
-    useTime: 4.0,
-    useText: 'Долго возишься. Руки не слушаются',
+    useTime: 9.5,
+    useText: 'Ложка, зажигалка, жгут. Руки не слушаются',
     duration: 60,
     speed: 0.92,
     damage: 1.15,
@@ -142,8 +142,8 @@ function afterSpec(effects: DrugEffects, day: number): DrugSpec | null {
 }
 
 export function drugSpeed(effects: DrugEffects, day: number): number {
-  // Пока употребляешь — не до бега.
-  const busy = effects.using ? 0.45 : 1;
+  // Пока употребляешь — руки заняты, ноги еле идут.
+  const busy = effects.using ? 0.3 : 1;
   return busy * (activeSpec(effects)?.speed ?? 1) * (afterSpec(effects, day)?.after.speed ?? 1);
 }
 
