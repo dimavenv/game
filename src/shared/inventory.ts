@@ -30,6 +30,7 @@ export interface Inventory {
   hasGoodAxe: boolean;
   hasShotgun: boolean;
   hasHammer: boolean;
+  hasLighter: boolean;
   hasKnife: boolean;
 }
 
@@ -45,6 +46,7 @@ export function createInventory(money: number): Inventory {
     hasGoodAxe: false,
     hasShotgun: false,
     hasHammer: false,
+    hasLighter: false,
     hasKnife: false,
   };
 }

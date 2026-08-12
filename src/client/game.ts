@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import {
   APPLES,
+  CAMPFIRE,
   CHOP,
   ECONOMY,
   ANIMALS,
@@ -120,7 +121,7 @@ import { createNpc, type NpcHandle } from './render/characters';
 import { Forest, TREE_HEIGHT } from './render/forest';
 import { GroundCover } from './render/groundcover';
 import { buildAppleTree, buildMonument, ChopEffects, type AppleTreeHandle } from './render/nature';
-import { PLACED_MATERIALS, PlacedStructures } from './render/placed';
+import { PLACED_MATERIALS, PRESS_FLOOR, PlacedStructures } from './render/placed';
 import { buildVine, buildWildVine, type VineHandle } from './render/vines';
 import { Sky } from './render/sky';
 import { Smoke } from './render/smoke';
@@ -272,6 +273,8 @@ export class Game {
   private bob = 0;
   private slot: Slot = 1;
   private seat: SeatSpot | null = null;
+  /** В каком чане сейчас топчут виноград. */
+  private stompingAt: PlacedStructure | null = null;
   private chore: Chore | null = null;
   private readonly cheatMenu = new CheatMenu();
   /** Читы: работают только после пароля в главном меню. */
@@ -695,6 +698,7 @@ export class Game {
 
     this.updateAnimals(dt);
     this.updateFilters(dt * scale);
+    this.updateCampfires(dt * scale);
     this.updateSurvival(dt * scale);
     this.updateDrugs(dt);
     this.updateAviAudio();
@@ -840,9 +844,24 @@ export class Game {
     mutation.hits += 1;
 
     const needed = this.state.inventory.hasGoodAxe ? CHOP.hitsGoodAxe : CHOP.hits;
+    const tree = this.world.trees[id];
+    // Ствол вздрагивает, летят щепки, зарубка на глазах углубляется.
+    this.forest.shakeTree(id, this.player.yaw);
+    if (tree) {
+      this.chopEffects.chopMark(
+        id,
+        tree.x,
+        tree.y,
+        tree.z,
+        0.24 * tree.scale,
+        this.player.yaw,
+        Math.min(mutation.hits / needed, 1),
+      );
+    }
     if (mutation.hits >= needed) {
       mutation.hits = 0;
       mutation.choppedDay = this.clock.day;
+      this.chopEffects.clearMark(id);
       this.fellTree(id);
     }
     world.trees.set(id, mutation);
@@ -881,6 +900,7 @@ export class Game {
       const obstacle = this.world.treeObstacles[id];
       if (obstacle) obstacle.disabled = false;
       this.chopEffects.removeStump(id);
+      this.chopEffects.clearMark(id);
       this.state.world.trees.delete(id);
     }
 
@@ -888,6 +908,7 @@ export class Game {
       if (boulder.brokenDay === null) continue;
       if (day - boulder.brokenDay < STONES.boulderRegrowDays) continue;
       this.forest.setPropVisible('rock', index, true);
+      this.forest.resetRock(index);
       this.state.world.boulders.delete(index);
     }
     for (const [index, takenDay] of this.state.world.pebbles) {
@@ -1176,6 +1197,7 @@ export class Game {
     this.cover.update(dt, this.camera.position.x, this.camera.position.z);
     this.catamaran.update(dt);
     this.placed.sync(this.state.world.structures, this.clock.day);
+    this.placed.update(dt);
     this.syncVines();
     this.updateGhost();
     this.chopEffects.update(dt);
@@ -1304,7 +1326,11 @@ export class Game {
   private restoreWorldVisuals(): void {
     const day = this.clock.day;
     for (const [index, boulder] of this.state.world.boulders) {
-      if (boulder.brokenDay === null) continue;
+      if (boulder.brokenDay === null) {
+        // Недобитый валун так и стоит осевшим — это видно и после загрузки.
+        if (boulder.hits > 0) this.forest.damageRock(index, boulder.hits / STONES.boulderHits);
+        continue;
+      }
       if (day - boulder.brokenDay >= STONES.boulderRegrowDays) continue;
       this.forest.setPropVisible('rock', index, false);
     }
@@ -1740,10 +1766,17 @@ export class Game {
     const boulders = this.state.world.boulders;
     const boulder = boulders.get(index) ?? { hits: 0, brokenDay: null };
     boulder.hits += 1;
+
+    // Валун оседает и кренится, во все стороны летит каменная крошка.
+    const rock = this.rockPoints[index];
+    if (rock) this.chopEffects.rockMark(rock.x, rock.y, rock.z, this.player.yaw);
+    this.forest.damageRock(index, Math.min(boulder.hits / STONES.boulderHits, 1));
+
     if (boulder.hits >= STONES.boulderHits) {
       boulder.hits = 0;
       boulder.brokenDay = this.clock.day;
       this.forest.setPropVisible('rock', index, false);
+      this.forest.resetRock(index);
       const left = addItem(this.state.inventory, 'stone', STONES.boulderStones);
       this.toasts.push(
         left > 0 ? 'Валун разбит, но камни не влезли' : `Валун разбит. Камней: +${STONES.boulderStones}`,
@@ -1876,6 +1909,7 @@ export class Game {
     if (this.buildKind === 'chest') structure.storage = Array.from({ length: CHEST_SLOTS }, () => null);
     if (this.buildKind === 'cellar') structure.barrels = [];
     if (this.buildKind === 'press') structure.juice = 0;
+    if (this.buildKind === 'campfire') structure.fuel = 0;
     if (this.buildKind === 'vine') structure.pickedDay = null;
     this.state.world.structures.push(structure);
     this.registerStructureCollider(structure);
@@ -1929,6 +1963,9 @@ export class Game {
       case 'vine':
         this.pickPlantedGrapes(structure);
         break;
+      case 'campfire':
+        this.useCampfire(structure);
+        break;
       case 'dryer':
         this.openDryer(structure);
         break;
@@ -1938,6 +1975,62 @@ export class Game {
       default:
         break;
     }
+  }
+
+  /** Разжечь костёр зажигалкой или подбросить в горящий полено. */
+  private useCampfire(structure: PlacedStructure): void {
+    const inv = this.state.inventory;
+    const lit = (structure.fuel ?? 0) > 0;
+
+    if (!lit) {
+      if (!inv.hasLighter) {
+        this.toasts.push('Нечем разжечь. Зажигалка у Томера, 60 ₪', 'bad');
+        return;
+      }
+      structure.fuel = CAMPFIRE.burnSeconds;
+      this.audio.stoke();
+      this.toasts.push('Костёр занялся. К утру прогорит');
+      return;
+    }
+
+    if (countItem(inv, 'log') <= 0) {
+      this.toasts.push('Дров нет', 'bad');
+      return;
+    }
+    removeItem(inv, 'log', 1);
+    structure.fuel = (structure.fuel ?? 0) + CAMPFIRE.logSeconds;
+    this.audio.stoke();
+    this.toasts.push('Подбросил дров');
+  }
+
+  /** Костры прогорают по игровому времени, даже когда игрок далеко. */
+  private updateCampfires(dt: number): void {
+    for (const s of this.state.world.structures) {
+      if (s.kind !== 'campfire' || !s.fuel) continue;
+      s.fuel = Math.max(0, s.fuel - dt);
+      if (s.fuel === 0) this.toasts.push('Костёр прогорел');
+    }
+  }
+
+  /** Ближайший горящий костёр: и греет, и на нём жарят. */
+  private nearestFire(range: number): { x: number; z: number } | null {
+    const fire = campfirePosition();
+    let best: { x: number; z: number } | null = null;
+    let bestD = range;
+    const d = Math.hypot(this.player.x - fire.x, this.player.z - fire.z);
+    if (d < bestD) {
+      best = fire;
+      bestD = d;
+    }
+    for (const s of this.state.world.structures) {
+      if (s.kind !== 'campfire' || (s.fuel ?? 0) <= 0) continue;
+      const sd = Math.hypot(this.player.x - s.x, this.player.z - s.z);
+      if (sd < bestD) {
+        best = { x: s.x, z: s.z };
+        bestD = sd;
+      }
+    }
+    return best;
   }
 
   /** Сушилка: шкуры висят сутки, потом с них шьют одежду. */
@@ -2139,12 +2232,17 @@ export class Game {
     }
     removeItem(inv, 'grape', WINE.grapesPerMust);
     structure.juice = (structure.juice ?? 0) + 1;
-    // Встаём прямо в чан: ноги видно, а из чана уже не выйти до конца.
+    this.stompingAt = structure;
+    // Забираемся прямо в чан: ноги стоят на его дне, а не на земле рядом.
     this.seat = null;
     this.player.x = structure.x;
     this.player.z = structure.z;
     this.player.vx = 0;
     this.player.vz = 0;
+    this.player.vy = 0;
+    this.player.feetY = structure.y + PRESS_FLOOR;
+    this.player.eyeY = this.player.feetY + PLAYER.eyeHeight;
+    this.player.onGround = true;
     this.player.pitch = -0.2;
     this.stomp.start(() => this.audio.stomp());
   }
@@ -2152,6 +2250,18 @@ export class Game {
   /** Сцена доиграна: сусло в рюкзак, игрок вылезает из чана. */
   private finishStomp(): void {
     const inv = this.state.inventory;
+    // Вылезаем наружу: внутри чана стоит коллайдер, там делать нечего.
+    const press = this.stompingAt;
+    this.stompingAt = null;
+    if (press) {
+      const away = Math.hypot(this.player.x - press.x, this.player.z - press.z) || 1;
+      const dx = (this.player.x - press.x) / away;
+      const dz = (this.player.z - press.z) / away;
+      this.player.x = press.x + (dx || 0) * 2.2;
+      this.player.z = press.z + (dz || 1) * 2.2;
+      this.player.feetY = this.world.terrain.height(this.player.x, this.player.z);
+      this.player.eyeY = this.player.feetY + PLAYER.eyeHeight;
+    }
     if (addItem(inv, 'must', 1) > 0) {
       this.toasts.push('Сусло некуда налить', 'bad');
       return;
@@ -2350,9 +2460,8 @@ export class Game {
     p.thirst = clamp(p.thirst - SURVIVAL.thirstDrain * dt, 0, SURVIVAL.max);
 
     // У огня греешься, на морозе стынешь тем быстрее, чем хуже одет.
-    const fire = campfirePosition();
     const nearFire =
-      Math.hypot(p.x - fire.x, p.z - fire.z) < 5.5 ||
+      this.nearestFire(CAMPFIRE.warmRange) !== null ||
       (this.state.world.stoveFuel > 0 &&
         Math.hypot(p.x - this.world.hut.x, p.z - this.world.hut.z) < 5);
     const cold = chill(this.clock.day, this.clock.t, insulation(inv));
@@ -2534,11 +2643,11 @@ export class Game {
     };
   }
 
-  /** Костёр на поляне: над ним жарят мясо. */
+  /** Костёр: над любым горящим жарят мясо. */
   private campfireTarget(): Target | null {
-    const fire = campfirePosition();
+    const fire = this.nearestFire(CAMPFIRE.cookRange);
+    if (!fire) return null;
     const d = Math.hypot(this.player.x - fire.x, this.player.z - fire.z);
-    if (d > INTERACT.range + 1.2) return null;
     const dx = fire.x - this.player.x;
     const dz = fire.z - this.player.z;
     const len = Math.hypot(dx, dz) || 1;
@@ -2549,7 +2658,8 @@ export class Game {
       index: -1,
       hint: raw > 0 ? `E — пожарить мясо (${raw})` : 'Сырого мяса нет',
       distance: d,
-      priority: 2,
+      // С мясом в руках жарка важнее возни с дровами, без мяса — наоборот.
+      priority: raw > 0 ? 3 : 0,
     };
   }
 

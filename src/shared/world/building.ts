@@ -12,6 +12,7 @@ export type BlueprintId =
   | 'gate'
   | 'chest'
   | 'pier'
+  | 'campfire'
   | 'smokehouse'
   | 'dryer'
   | 'filter'
@@ -108,6 +109,16 @@ export const BLUEPRINTS: Record<BlueprintId, Blueprint> = {
     solid: false,
     onWater: true,
   },
+  campfire: {
+    name: 'Костёр',
+    hint: 'Греет и жарит мясо. Разжигается зажигалкой, за ночь прогорает',
+    logs: 4,
+    stones: 3,
+    hw: 0.9,
+    hd: 0.9,
+    height: 0.5,
+    solid: false,
+  },
   dryer: {
     name: 'Сушилка для шкур',
     hint: 'Шкуры сохнут сутки и становятся кожей',
@@ -160,6 +171,8 @@ export interface PlacedStructure {
   hides?: { count: number; startedDay: number }[];
   /** Очиститель: сколько мутной залито, сколько чистой готово и таймер. */
   water?: { dirty: number; clean: number; timer: number };
+  /** Костёр: сколько секунд игрового времени ему ещё гореть. */
+  fuel?: number;
 }
 
 export const CHEST_SLOTS = 24;

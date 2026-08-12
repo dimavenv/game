@@ -330,6 +330,9 @@ const SWAY_CHUNK = /* glsl */ `
   transformed.z += cos(swayPhase * 0.8) * swayAmount * 0.7;
 `;
 
+/** Сколько секунд ствол качается после удара. */
+const SHAKE_TIME = 0.45;
+
 /** Сколько разных форм лепится на каждую породу. */
 const TREE_VARIANTS = 2;
 
@@ -350,6 +353,10 @@ export class Forest {
   private readonly slots = new Map<number, TreeSlot>();
   /** Валуны и камешки прячем так же, как срубленные деревья. */
   private readonly props = new Map<string, { mesh: THREE.InstancedMesh; matrices: THREE.Matrix4[] }>();
+  /** Стволы, которые сейчас качает от удара топором. */
+  private readonly shaking: { slot: TreeSlot; timer: number; yaw: number }[] = [];
+  /** Насколько разбит каждый валун: 0 — целый, 1 — вот-вот рассыплется. */
+  private readonly rockDamage = new Map<number, number>();
 
   constructor(world: WorldData, quality: QualitySettings) {
     // По две формы на породу: соседние деревья перестают быть близнецами.
@@ -474,6 +481,59 @@ export class Forest {
     entry.mesh.instanceMatrix.needsUpdate = true;
   }
 
+  /**
+   * Удар топором: ствол вздрагивает и качается затухающей волной. Дешевле
+   * любой анимации — просто ведём матрицу инстанса пару десятых секунды.
+   */
+  shakeTree(id: number, playerYaw: number): void {
+    const slot = this.slots.get(id);
+    if (!slot) return;
+    const existing = this.shaking.find((s) => s.slot === slot);
+    if (existing) {
+      existing.timer = SHAKE_TIME;
+      existing.yaw = playerYaw;
+      return;
+    }
+    this.shaking.push({ slot, timer: SHAKE_TIME, yaw: playerYaw });
+  }
+
+  /**
+   * Валун от удара оседает и кренится: по виду понятно, что он вот-вот
+   * развалится. fraction — доля выбитого, от 0 до 1.
+   */
+  damageRock(index: number, fraction: number): void {
+    const entry = this.props.get('rock');
+    const original = entry?.matrices[index];
+    if (!entry || !original) return;
+    this.rockDamage.set(index, fraction);
+
+    const position = new THREE.Vector3();
+    const quaternion = new THREE.Quaternion();
+    const scale = new THREE.Vector3();
+    original.decompose(position, quaternion, scale);
+    // Оседает, сжимается и заваливается набок — трещины дорисовывает воображение.
+    const shrink = 1 - fraction * 0.3;
+    scale.multiplyScalar(shrink);
+    position.y -= fraction * 0.12;
+    const tilt = new THREE.Quaternion().setFromAxisAngle(
+      new THREE.Vector3(Math.cos(index * 1.7), 0, Math.sin(index * 1.7)),
+      fraction * 0.34,
+    );
+    quaternion.premultiply(tilt);
+    entry.mesh.setMatrixAt(index, new THREE.Matrix4().compose(position, quaternion, scale));
+    entry.mesh.instanceMatrix.needsUpdate = true;
+  }
+
+  /** Валун отрос — возвращаем целую форму. */
+  resetRock(index: number): void {
+    const entry = this.props.get('rock');
+    const original = entry?.matrices[index];
+    if (!entry || !original) return;
+    this.rockDamage.delete(index);
+    entry.mesh.setMatrixAt(index, original);
+    entry.mesh.instanceMatrix.needsUpdate = true;
+  }
+
   /** Срубленное дерево прячем сжатием инстанса в точку, потом возвращаем. */
   setTreeVisible(id: number, visible: boolean): void {
     const slot = this.slots.get(id);
@@ -490,5 +550,25 @@ export class Forest {
 
   update(dt: number): void {
     this.time.value += dt;
+
+    for (let i = this.shaking.length - 1; i >= 0; i--) {
+      const shake = this.shaking[i];
+      shake.timer -= dt;
+      const slot = shake.slot;
+      if (shake.timer <= 0) {
+        slot.mesh.setMatrixAt(slot.index, slot.matrix);
+        slot.mesh.instanceMatrix.needsUpdate = true;
+        this.shaking.splice(i, 1);
+        continue;
+      }
+      // Затухающие колебания вдоль удара.
+      const k = shake.timer / SHAKE_TIME;
+      const wobble = Math.sin((1 - k) * 34) * k * k * 0.09;
+      const m = slot.matrix.clone();
+      m.elements[12] -= Math.sin(shake.yaw) * wobble;
+      m.elements[14] -= Math.cos(shake.yaw) * wobble;
+      slot.mesh.setMatrixAt(slot.index, m);
+      slot.mesh.instanceMatrix.needsUpdate = true;
+    }
   }
 }

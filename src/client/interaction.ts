@@ -231,7 +231,17 @@ export class Interactions {
       if (s.kind === 'chest') hint = 'E — сундук';
       else if (s.kind === 'press') hint = 'E — топтать виноград';
       else if (s.kind === 'cellar') hint = 'E — погреб';
-      else if (s.kind === 'dryer') hint = 'E — сушилка';
+      else if (s.kind === 'campfire') {
+        const lit = (s.fuel ?? 0) > 0;
+        const logs = countItem(state.inventory, 'log');
+        hint = lit
+          ? logs > 0
+            ? 'E — подбросить дров'
+            : 'Горит. Мясо жарится рядом'
+          : state.inventory.hasLighter
+            ? 'E — разжечь зажигалкой'
+            : 'Нужна зажигалка — у Томера 60 ₪';
+      } else if (s.kind === 'dryer') hint = 'E — сушилка';
       else if (s.kind === 'filter') hint = 'E — очиститель воды';
       else if (s.kind === 'vine') {
         hint = plantedVineReady(s, day, WINE.saplingGrowDays, WINE.vineRegrowDays)

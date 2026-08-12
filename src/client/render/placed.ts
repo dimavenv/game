@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { CRAFT } from '../../shared/balance';
+import { buildFire, type FireHandle } from './fire';
 import { BLUEPRINTS, type BlueprintId, type PlacedStructure } from '../../shared/world/building';
 
 function tint(geo: THREE.BufferGeometry, hex: number): THREE.BufferGeometry {
@@ -42,6 +43,9 @@ function hoop(radius: number, y: number, hex: number): THREE.BufferGeometry {
   return tint(g, hex);
 }
 
+/** Высота дна давильни над её основанием: сюда встаёт игрок. */
+export const PRESS_FLOOR = 0.79;
+
 const WOOD = 0x6d5334;
 const DARK_WOOD = 0x53422c;
 const STONE = 0x7b7871;
@@ -54,6 +58,8 @@ function geometryFor(kind: BlueprintId): THREE.BufferGeometry {
         // Чан на ножках и рычаг сверху.
         box(2.0, 0.16, 2.0, DARK_WOOD, 0, 0.08, 0),
         ...[-0.85, 0.85].flatMap((dx) => [-0.85, 0.85].map((dz) => post(0.09, 0.5, DARK_WOOD, dx, 0.16, dz))),
+        // Дно чана: на нём и топчутся, поэтому оно должно быть настоящим.
+        box(1.86, 0.14, 1.86, DARK_WOOD, 0, PRESS_FLOOR - 0.07, 0),
         box(2.0, 0.7, 0.14, WOOD, 0, 1.0, -0.93),
         box(2.0, 0.7, 0.14, WOOD, 0, 1.0, 0.93),
         box(0.14, 0.7, 1.86, WOOD, -0.93, 1.0, 0),
@@ -155,6 +161,26 @@ function geometryFor(kind: BlueprintId): THREE.BufferGeometry {
         box(0.9, 0.5, 0.9, WOOD, 0, 1.55, 0),
         post(0.16, 0.5, 0x4a4038, 0, 1.8, 0, 6),
         box(0.7, 0.6, 0.1, 0x3a2c22, 0, 0.55, 0.81),
+      ]);
+
+    case 'campfire':
+      // Кольцо камней и шалаш из поленьев: сам огонь добавляется отдельно.
+      return merge([
+        ...Array.from({ length: 8 }, (_, i) => {
+          const a = (i / 8) * Math.PI * 2;
+          const stone = new THREE.DodecahedronGeometry(0.15 + (i % 3) * 0.025, 0);
+          stone.scale(1, 0.55, 1);
+          stone.rotateY(i * 1.4);
+          stone.translate(Math.cos(a) * 0.62, 0.05, Math.sin(a) * 0.62);
+          return tint(stone, i % 3 === 0 ? 0x5d5850 : 0x7a746a);
+        }),
+        ...Array.from({ length: 4 }, (_, i) => {
+          const log = new THREE.CylinderGeometry(0.06, 0.075, 0.8, 6);
+          log.rotateZ(Math.PI / 2 - 0.45);
+          log.rotateY((i / 4) * Math.PI * 2);
+          log.translate(0, 0.16, 0);
+          return tint(log, 0x3a2c1e);
+        }),
       ]);
 
     case 'dryer': {
@@ -273,6 +299,8 @@ export class PlacedStructures {
   private readonly meshes = new Map<number, THREE.Object3D>();
   /** Содержимое: шкуры на сушилке, вода в очистителе. */
   private readonly contents = new Map<number, THREE.Object3D[]>();
+  /** Огонь в поставленных костpах: у каждого свой, и его надо шевелить. */
+  private readonly fires = new Map<number, { fire: FireHandle; light: THREE.PointLight }>();
   private readonly material = STRUCTURE_MATERIAL;
   private readonly ghostMaterial = new THREE.MeshBasicMaterial({
     color: 0x9fe08a,
@@ -320,6 +348,7 @@ export class PlacedStructures {
       this.group.remove(mesh);
       this.meshes.delete(id);
       this.contents.delete(id);
+      this.fires.delete(id);
     }
   }
 
@@ -339,10 +368,20 @@ export class PlacedStructures {
       return;
     }
 
+    if (s.kind === 'campfire') {
+      const fire = buildFire(0.8);
+      fire.group.position.y = 0.12;
+      const light = new THREE.PointLight(0xff8a30, 0, 14, 2);
+      light.position.y = 0.7;
+      parent.add(fire.group, light);
+      this.fires.set(s.id, { fire, light });
+      return;
+    }
+
     if (s.kind === 'press') {
       // Мезга в чане: её тем больше, чем больше натоптано.
       const pulp = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.1, 1.7), MUST);
-      pulp.position.set(0, 0.7, 0);
+      pulp.position.set(0, PRESS_FLOOR + 0.05, 0);
       parent.add(pulp);
       this.contents.set(s.id, [pulp]);
       return;
@@ -403,12 +442,24 @@ export class PlacedStructures {
       return;
     }
 
+    if (s.kind === 'campfire') {
+      const handle = this.fires.get(s.id);
+      if (handle) {
+        // Догорающий костёр слабеет, а не гаснет разом.
+        const left = s.fuel ?? 0;
+        const strength = left <= 0 ? 0 : Math.min(1, 0.35 + left / 400);
+        handle.fire.set(strength);
+        handle.light.intensity = strength * 6;
+      }
+      return;
+    }
+
     if (s.kind === 'press') {
       // Первая порция уже мажет дно, дальше слой растёт до половины чана.
       const level = Math.min((s.juice ?? 0) / 6, 1);
       const pulp = items[0];
       pulp.scale.y = 0.4 + level * 2.6;
-      pulp.position.y = 0.68 + pulp.scale.y * 0.05;
+      pulp.position.y = PRESS_FLOOR + pulp.scale.y * 0.05;
       pulp.visible = (s.juice ?? 0) > 0;
       return;
     }
@@ -426,6 +477,11 @@ export class PlacedStructures {
       clean.visible = tank.clean > 0;
       for (let i = 0; i < 3; i++) items[2 + i].visible = tank.clean > i;
     }
+  }
+
+  /** Огонь во всех поставленных кострах шевелится сам. */
+  update(dt: number): void {
+    for (const { fire } of this.fires.values()) fire.update(dt);
   }
 
   /** Призрак под курсором: зелёный — можно ставить, красный — нельзя. */

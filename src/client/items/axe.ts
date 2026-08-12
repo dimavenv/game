@@ -1,6 +1,9 @@
 import * as THREE from 'three';
 import { CHOP } from '../../shared/balance';
 
+/** Какая доля замаха уходит на отвод топора назад. */
+const WINDUP = 0.34;
+
 /** Топор в руке: замах ощутимый, удар засчитывается в середине дуги. */
 export class AxeItem {
   private readonly group = new THREE.Group();
@@ -58,19 +61,31 @@ export class AxeItem {
     if (this.swinging) {
       this.timer += dt;
       const t = this.timer / CHOP.swingTime;
-      // Замах назад, потом резкий проход вперёд.
-      const arc = t < 0.35 ? -Math.sin((t / 0.35) * Math.PI * 0.5) * 0.5 : Math.sin(((t - 0.35) / 0.65) * Math.PI) * 1.5;
-      this.group.rotation.x = -0.22 + arc;
-      this.group.position.y = -0.56 + arc * 0.06;
+      // Настоящий замах: топор уходит вправо и назад, потом идёт боком по
+      // дуге через кадр и врубается в ствол сбоку, а не тюкает сверху.
+      const wind = t < WINDUP ? t / WINDUP : 1;
+      const strike = t < WINDUP ? 0 : (t - WINDUP) / (1 - WINDUP);
+      const swing = strike * strike * (3 - 2 * strike);
 
-      if (!this.hitSent && t >= 0.6) {
+      this.group.rotation.set(
+        -0.22 - wind * 0.28 + swing * 0.52,
+        -0.5 + wind * 0.85 - swing * 1.85,
+        0.6 + wind * 0.38 - swing * 1.3,
+      );
+      this.group.position.set(
+        0.44 + wind * 0.18 - swing * 0.58,
+        -0.56 - wind * 0.07 + swing * 0.13,
+        -0.62 - wind * 0.06 - swing * 0.14,
+      );
+
+      if (!this.hitSent && t >= 0.62) {
         this.hitSent = true;
         hit = true;
       }
       if (t >= 1) {
         this.swinging = false;
-        this.group.rotation.x = -0.22;
-        this.group.position.y = -0.56;
+        this.group.rotation.set(-0.22, -0.5, 0.6);
+        this.group.position.set(0.44, -0.56, -0.62);
       }
     } else if (this.group.visible) {
       this.group.position.y = -0.56 + Math.sin(this.clock * 1.6) * 0.004;

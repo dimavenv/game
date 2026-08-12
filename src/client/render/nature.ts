@@ -239,11 +239,75 @@ export function buildMonument(x: number, y: number, z: number, rot: number): Mon
 }
 
 /** Пни и падающие стволы от рубки: небольшой пул на весь лес. */
+/** Щепки и осколки: общий пул точек с гравитацией на весь лес. */
+class Chips {
+  readonly points: THREE.Points;
+  private readonly velocity: Float32Array;
+  private readonly life: Float32Array;
+  private next = 0;
+
+  constructor(count: number, color: number, size: number) {
+    const geo = new THREE.BufferGeometry();
+    const pos = new Float32Array(count * 3);
+    for (let i = 0; i < count; i++) pos[i * 3 + 1] = -999;
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    this.velocity = new Float32Array(count * 3);
+    this.life = new Float32Array(count);
+    this.points = new THREE.Points(
+      geo,
+      new THREE.PointsMaterial({ color, size, transparent: true, opacity: 0.95 }),
+    );
+    this.points.frustumCulled = false;
+  }
+
+  /** Пригоршня осколков из точки удара, разлёт — от игрока. */
+  burst(x: number, y: number, z: number, awayYaw: number, count = 14, power = 1): void {
+    const pos = this.points.geometry.attributes.position as THREE.BufferAttribute;
+    const fx = -Math.sin(awayYaw);
+    const fz = -Math.cos(awayYaw);
+    for (let i = 0; i < count; i++) {
+      const slot = this.next;
+      this.next = (this.next + 1) % this.life.length;
+      pos.setXYZ(slot, x, y, z);
+      const spread = 1.8;
+      this.velocity[slot * 3] = (-fx + (Math.random() - 0.5) * spread) * (1.4 + Math.random()) * power;
+      this.velocity[slot * 3 + 1] = (1.6 + Math.random() * 2.2) * power;
+      this.velocity[slot * 3 + 2] = (-fz + (Math.random() - 0.5) * spread) * (1.4 + Math.random()) * power;
+      this.life[slot] = 0.7 + Math.random() * 0.6;
+    }
+    pos.needsUpdate = true;
+  }
+
+  update(dt: number): void {
+    const pos = this.points.geometry.attributes.position as THREE.BufferAttribute;
+    let any = false;
+    for (let i = 0; i < this.life.length; i++) {
+      if (this.life[i] <= 0) continue;
+      any = true;
+      this.life[i] -= dt;
+      this.velocity[i * 3 + 1] -= 11 * dt;
+      pos.setXYZ(
+        i,
+        pos.getX(i) + this.velocity[i * 3] * dt,
+        pos.getY(i) + this.velocity[i * 3 + 1] * dt,
+        pos.getZ(i) + this.velocity[i * 3 + 2] * dt,
+      );
+      if (this.life[i] <= 0) pos.setXYZ(i, 0, -999, 0);
+    }
+    if (any) pos.needsUpdate = true;
+  }
+}
+
 export class ChopEffects {
   readonly group = new THREE.Group();
   private readonly stumpGeo: THREE.BufferGeometry;
   private readonly stumpMat: THREE.Material;
   private readonly stumps = new Map<number, THREE.Mesh>();
+  /** Зарубки на недорубленных стволах: одна на дерево, растёт с ударами. */
+  private readonly notches = new Map<number, THREE.Mesh>();
+  private readonly notchGeo: THREE.BufferGeometry;
+  private readonly woodChips = new Chips(120, 0xa8814e, 0.055);
+  private readonly stoneChips = new Chips(120, 0x9a968c, 0.05);
   private readonly falling: {
     mesh: THREE.Mesh;
     timer: number;
@@ -255,6 +319,50 @@ export class ChopEffects {
     geo.translate(0, 0.22, 0);
     this.stumpGeo = tint(geo, 0x7a6141);
     this.stumpMat = NATURE_MATERIAL();
+
+    // Зарубка: клин светлой древесины, воткнутый в ствол.
+    const notch = new THREE.CylinderGeometry(0.05, 0.26, 0.34, 4, 1, false, 0, Math.PI);
+    notch.rotateX(Math.PI / 2);
+    notch.rotateZ(Math.PI / 2);
+    this.notchGeo = tint(notch, 0xc9a468);
+
+    this.group.add(this.woodChips.points, this.stoneChips.points);
+  }
+
+  /**
+   * Отмечает удар по стволу: щепки летят, зарубка углубляется. depth — доля
+   * от полного пропила, 0 — только надрубил, 1 — вот-вот упадёт.
+   */
+  chopMark(id: number, x: number, y: number, z: number, radius: number, playerYaw: number, depth: number): void {
+    const height = y + 0.9;
+    // Точка удара — со стороны игрока, у самого комля.
+    const hx = x + Math.sin(playerYaw) * radius;
+    const hz = z + Math.cos(playerYaw) * radius;
+    this.woodChips.burst(hx, height, hz, playerYaw, 16, 1);
+
+    let notch = this.notches.get(id);
+    if (!notch) {
+      notch = new THREE.Mesh(this.notchGeo, this.stumpMat);
+      this.group.add(notch);
+      this.notches.set(id, notch);
+    }
+    notch.position.set(hx, height, hz);
+    notch.rotation.y = playerYaw;
+    // Пропил растёт вглубь и вширь, пока дерево не свалится.
+    notch.scale.set(radius * 2.2, 0.5 + depth * 0.9, 0.35 + depth * 0.8);
+  }
+
+  /** Убирает зарубку: дерево свалили или оно отросло. */
+  clearMark(id: number): void {
+    const notch = this.notches.get(id);
+    if (!notch) return;
+    this.group.remove(notch);
+    this.notches.delete(id);
+  }
+
+  /** Осколки от удара молотом по валуну. */
+  rockMark(x: number, y: number, z: number, playerYaw: number): void {
+    this.stoneChips.burst(x, y + 0.35, z, playerYaw, 18, 1.15);
   }
 
   addStump(id: number, x: number, y: number, z: number, scale: number): void {
@@ -293,6 +401,8 @@ export class ChopEffects {
   }
 
   update(dt: number): void {
+    this.woodChips.update(dt);
+    this.stoneChips.update(dt);
     for (let i = this.falling.length - 1; i >= 0; i--) {
       const f = this.falling[i];
       f.timer += dt;

@@ -195,10 +195,11 @@ export class Meal {
       this.pitch = raise * 0.05;
       this.roll = 0;
     } else {
-      // Бутылку задирают: чем ближе к концу глотка, тем выше дно.
+      // Бутылку задирают к себе: дно уходит вверх, горлышко — ко рту.
+      // Положительный поворот вокруг X клонит горлышко к камере, это и нужно.
       const tilt = Math.sin(inBeat * Math.PI);
       this.prop.position.set(0.13 - raise * 0.09, -0.4 + raise * 0.3, -0.4 + raise * 0.12);
-      this.prop.rotation.set(-tilt * 1.15, 0.25, 0.18 + tilt * 0.2);
+      this.prop.rotation.set(tilt * 1.15, 0.25, 0.18 + tilt * 0.2);
       this.pitch = raise * (0.06 + tilt * 0.12);
       this.roll = tilt * 0.02;
     }

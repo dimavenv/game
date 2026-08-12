@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { clamp } from '../../shared/rng';
+import { PLAYER } from '../../shared/balance';
 
 /**
  * Топтание винограда от первого лица. Раньше это был клик и надпись «сусло
@@ -10,6 +11,10 @@ import { clamp } from '../../shared/rng';
 const STEPS = 6;
 /** Сколько длится один шаг ноги. */
 const BEAT = 0.62;
+/** На сколько приседает камера, пока топчешь. */
+const LIFT = 0.55;
+/** Ступни относительно камеры: она опущена, ноги — на уровне пола чана. */
+const FEET_Y = -(PLAYER.eyeHeight - LIFT);
 
 function material(hex: number, roughness = 0.85): THREE.MeshStandardMaterial {
   return new THREE.MeshStandardMaterial({ color: hex, roughness, flatShading: true });
@@ -61,9 +66,10 @@ export class StompScene {
 
   constructor(camera: THREE.PerspectiveCamera) {
     this.legs = [buildLeg(-1), buildLeg(1)];
-    // Ноги висят под камерой: игрок смотрит на них сверху вниз.
+    // Ноги стоят ровно там, где стоит игрок. Камера на время сцены опущена
+    // на LIFT, поэтому от неё до ступней остаётся eyeHeight минус этот сдвиг.
     for (const leg of this.legs) {
-      leg.group.position.y = -1.45;
+      leg.group.position.y = FEET_Y;
       leg.group.position.z = -0.34;
       this.root.add(leg.group);
     }
@@ -77,7 +83,7 @@ export class StompScene {
     }
     pulp.computeVertexNormals();
     this.juice = new THREE.Mesh(pulp, material(0x6a2233, 0.35));
-    this.juice.position.set(0, -1.47, -0.34);
+    this.juice.position.set(0, FEET_Y + 0.02, -0.34);
     this.root.add(this.juice);
 
     // Брызги: точки, которые подлетают на каждом ударе ноги.
@@ -152,14 +158,14 @@ export class StompScene {
       const leg = this.legs[i].group;
       // Мах вверх в первой половине такта, удар — во второй.
       const raise = own ? Math.sin(inBeat * Math.PI) : 0;
-      leg.position.y = -1.45 + raise * 0.26;
+      leg.position.y = FEET_Y + raise * 0.26;
       leg.position.z = -0.34 - raise * 0.06;
       leg.rotation.x = raise * 0.5;
       // Опорная нога чуть проседает под весом.
       if (!own) leg.position.y -= 0.02 * Math.sin(inBeat * Math.PI);
     }
 
-    this.lift = -0.55 - Math.abs(Math.sin(this.elapsed / BEAT * Math.PI)) * 0.05;
+    this.lift = -LIFT - Math.abs(Math.sin((this.elapsed / BEAT) * Math.PI)) * 0.05;
     this.pitch = -0.72 + Math.sin((this.elapsed / BEAT) * Math.PI * 2) * 0.03;
     this.roll = Math.sin((this.elapsed / BEAT) * Math.PI) * 0.045;
 
@@ -181,7 +187,7 @@ export class StompScene {
     for (let i = 0; i < this.splashLife.length; i++) {
       const a = Math.random() * Math.PI * 2;
       const r = Math.random() * 0.28;
-      pos.setXYZ(i, Math.cos(a) * r, -1.44, -0.34 + Math.sin(a) * r);
+      pos.setXYZ(i, Math.cos(a) * r, FEET_Y + 0.04, -0.34 + Math.sin(a) * r);
       this.splashVel[i * 3] = Math.cos(a) * (0.5 + Math.random() * 0.7);
       this.splashVel[i * 3 + 1] = 0.9 + Math.random() * 1.1;
       this.splashVel[i * 3 + 2] = Math.sin(a) * (0.5 + Math.random() * 0.7);

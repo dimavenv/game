@@ -126,6 +126,7 @@ const SHOP: ShopEntry[] = [
     buy: (s) => { s.inventory.hasFlashlight = true; },
   },
   { id: 'buy-hammer', label: 'Молот', price: ECONOMY.prices.hammer, owned: (s) => s.inventory.hasHammer, buy: (s) => { s.inventory.hasHammer = true; } },
+  { id: 'buy-lighter', label: 'Зажигалка', price: ECONOMY.prices.lighter, owned: (s) => s.inventory.hasLighter, buy: (s) => { s.inventory.hasLighter = true; } },
   { id: 'buy-beer', label: 'Пиво', price: ECONOMY.prices.beer, item: { id: 'beer', count: 1 } },
   { id: 'buy-knife', label: 'Разделочный нож', price: ECONOMY.prices.knife, owned: (s) => s.inventory.hasKnife, buy: (s) => { s.inventory.hasKnife = true; } },
   { id: 'buy-axe', label: 'Хороший топор', price: ECONOMY.prices.goodAxe, owned: (s) => s.inventory.hasGoodAxe, buy: (s) => { s.inventory.hasGoodAxe = true; } },
