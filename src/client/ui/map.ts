@@ -241,7 +241,8 @@ function buildRelief(terrain: Terrain): HTMLCanvasElement {
       } else {
         // Суша: светлая бумага внизу, охра и коричневый на высоте. Корень
         // растягивает низы — иначе бугры теряются на общем фоне.
-        const t = Math.sqrt(Math.min(Math.max(h / MOUNTAIN.height, 0), 1));
+        // Верх шкалы — выше самой вершины: гора теперь стоит на холмах.
+        const t = Math.sqrt(Math.min(Math.max(h / (MOUNTAIN.height * 1.6), 0), 1));
         r = 224 - t * 96;
         g = 210 - t * 112;
         b = 174 - t * 116;

@@ -101,7 +101,7 @@ import {
   zombieCount,
   type Zombie,
 } from '../shared/zombies';
-import { campfirePosition, platformAt } from '../shared/world/buildings';
+import { campfirePosition, platformNear } from '../shared/world/buildings';
 import { Terrain } from '../shared/world/terrain';
 import { generateWorld, type WorldData } from '../shared/world/worldgen';
 import { GameAudio } from './audio/audio';
@@ -1711,7 +1711,7 @@ export class Game {
    */
   private cheatStand(x: number, z: number): { x: number; z: number; y: number } {
     const fits = (px: number, pz: number): number | null => {
-      const deck = platformAt(this.world.platforms, px, pz);
+      const deck = platformNear(this.world.platforms, px, pz);
       if (deck !== null) return deck;
       if (this.world.terrain.depth(px, pz) > 0.25) return null;
       return this.world.terrain.height(px, pz);

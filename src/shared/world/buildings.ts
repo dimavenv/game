@@ -222,7 +222,39 @@ export function bridgePlatform(): Platform {
 }
 
 /** Высота настила под точкой или null, если там настила нет. */
-export function platformAt(platforms: Platform[], x: number, z: number): number | null {
+/**
+ * Высота настила под точкой или null, если под ногами настила нет.
+ *
+ * feetY обязателен: настилы пещерных ходов лежат внутри холмов, и без
+ * проверки по высоте игрок, идущий по вершине, вставал бы на пол тоннеля
+ * двадцатью метрами ниже — то есть просто проваливался сквозь гору.
+ * Из нескольких подходящих берём самый верхний.
+ */
+export function platformAt(platforms: Platform[], x: number, z: number, feetY: number): number | null {
+  /** На сколько можно шагнуть вверх и с какой высоты ещё «дотягиваешься» вниз. */
+  const stepUp = 1.4;
+  const reachDown = 4.5;
+  let best: number | null = null;
+  for (const p of platforms) {
+    if (p.y > feetY + stepUp || p.y < feetY - reachDown) continue;
+    const cos = Math.cos(p.yaw);
+    const sin = Math.sin(p.yaw);
+    const dx = x - p.x;
+    const dz = z - p.z;
+    const lx = dx * cos - dz * sin;
+    const lz = dx * sin + dz * cos;
+    if (Math.abs(lx) > p.hw || Math.abs(lz) > p.hd) continue;
+    if (best === null || p.y > best) best = p.y;
+  }
+  return best;
+}
+
+/**
+ * Настил под точкой без оглядки на высоту. Нужен только телепорту из
+ * чит-меню: он ставит игрока сразу на мост, а не ищет, где тот стоял.
+ */
+export function platformNear(platforms: Platform[], x: number, z: number): number | null {
+  let best: number | null = null;
   for (const p of platforms) {
     const cos = Math.cos(p.yaw);
     const sin = Math.sin(p.yaw);
@@ -230,9 +262,10 @@ export function platformAt(platforms: Platform[], x: number, z: number): number 
     const dz = z - p.z;
     const lx = dx * cos - dz * sin;
     const lz = dx * sin + dz * cos;
-    if (Math.abs(lx) <= p.hw && Math.abs(lz) <= p.hd) return p.y;
+    if (Math.abs(lx) > p.hw || Math.abs(lz) > p.hd) continue;
+    if (best === null || p.y > best) best = p.y;
   }
-  return null;
+  return best;
 }
 
 /** Костёр между хижиной и ларьком — ориентир на поляне. */

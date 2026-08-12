@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import type { PropInstance, WorldData } from '../../shared/world/worldgen';
+import type { Terrain } from '../../shared/world/terrain';
 import { TreeType } from '../../shared/world/worldgen';
 import type { QualitySettings } from '../quality';
 
@@ -343,6 +344,8 @@ interface TreeSlot {
   mesh: THREE.InstancedMesh;
   index: number;
   matrix: THREE.Matrix4;
+  /** Срублено ли дерево прямо сейчас: спрятанное трогать нельзя. */
+  hidden: boolean;
 }
 
 /** Лес: несколько InstancedMesh на весь мир, поэтому вызовов отрисовки единицы. */
@@ -384,7 +387,7 @@ export class Forest {
             new THREE.Vector3(t.scale, t.scale * (0.9 + (t.rot % 0.3)), t.scale),
           );
           mesh.setMatrixAt(i, m);
-          this.slots.set(id, { mesh, index: i, matrix: m.clone() });
+          this.slots.set(id, { mesh, index: i, matrix: m.clone(), hidden: false });
           // Небольшой разброс оттенка, чтобы лес не выглядел штампованным.
           const v = 0.86 + ((t.x * 13.7 + t.z * 7.3) % 1) * 0.28;
           mesh.setColorAt(i, color.setRGB(v * 0.98, v, v * 0.94));
@@ -399,9 +402,10 @@ export class Forest {
     const cut = (list: PropInstance[], factor: number): PropInstance[] =>
       factor >= 1 ? list : list.slice(0, Math.round(list.length * factor));
 
-    this.addProps(bushGeometry(), cut(world.bushes, quality.props), 0.3, 0.02, true);
-    this.addProps(rockGeometry(), world.rocks, 0, 0, true, 'rock');
-    this.addProps(pebbleGeometry(), world.pebbles, 0, 0, false, 'pebble');
+    const terrain = world.terrain;
+    this.addProps(bushGeometry(), cut(world.bushes, quality.props), 0.3, 0.02, true, undefined, false, terrain, 0.5, 0.04);
+    this.addProps(rockGeometry(), world.rocks, 0, 0, true, 'rock', false, terrain, 0.85, 0.12);
+    this.addProps(pebbleGeometry(), world.pebbles, 0, 0, false, 'pebble', false, terrain, 1, 0.1);
   }
 
   private makeInstanced(
@@ -440,6 +444,11 @@ export class Forest {
     };
   }
 
+  /**
+   * Кусты, валуны и камешки. На склоне их кладём по нормали земли и слегка
+   * вдавливаем: вертикальный камень на косогоре висит одним боком в воздухе.
+   * sink — на сколько долей своего размера прикопать.
+   */
   private addProps(
     geo: THREE.BufferGeometry,
     list: PropInstance[],
@@ -448,14 +457,29 @@ export class Forest {
     shadow: boolean,
     key?: string,
     doubleSide = false,
+    terrain?: Terrain,
+    tilt = 0,
+    sink = 0,
   ): void {
     const mesh = this.makeInstanced(geo, list.length, swayBase, swayScale, shadow, doubleSide);
     const matrices: THREE.Matrix4[] = [];
     const m = new THREE.Matrix4();
+    const up = new THREE.Vector3(0, 1, 0);
+    const normal = new THREE.Vector3();
+    const turn = new THREE.Quaternion();
+    const lean = new THREE.Quaternion();
     list.forEach((p, i) => {
+      turn.setFromAxisAngle(up, p.rot);
+      if (terrain && tilt > 0) {
+        const [nx, ny, nz] = terrain.normalAt(p.x, p.z, 1.2);
+        normal.set(nx, ny, nz).normalize();
+        // Наклоняем не до конца: полностью лёгший куст выглядит сбитым.
+        lean.setFromUnitVectors(up, normal);
+        turn.premultiply(new THREE.Quaternion().slerp(lean, tilt));
+      }
       m.compose(
-        new THREE.Vector3(p.x, p.y, p.z),
-        new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), p.rot),
+        new THREE.Vector3(p.x, p.y - p.scale * sink, p.z),
+        turn,
         new THREE.Vector3(p.scale, p.scale, p.scale),
       );
       mesh.setMatrixAt(i, m);
@@ -487,7 +511,7 @@ export class Forest {
    */
   shakeTree(id: number, playerYaw: number): void {
     const slot = this.slots.get(id);
-    if (!slot) return;
+    if (!slot || slot.hidden) return;
     const existing = this.shaking.find((s) => s.slot === slot);
     if (existing) {
       existing.timer = SHAKE_TIME;
@@ -538,6 +562,11 @@ export class Forest {
   setTreeVisible(id: number, visible: boolean): void {
     const slot = this.slots.get(id);
     if (!slot) return;
+    slot.hidden = !visible;
+    // Срубленное дерево нельзя оставлять в списке качающихся: затухающая
+    // качка возвращает матрицу на место и ствол встаёт обратно.
+    const shaking = this.shaking.findIndex((s) => s.slot === slot);
+    if (shaking >= 0) this.shaking.splice(shaking, 1);
     if (visible) {
       slot.mesh.setMatrixAt(slot.index, slot.matrix);
     } else {
@@ -555,6 +584,10 @@ export class Forest {
       const shake = this.shaking[i];
       shake.timer -= dt;
       const slot = shake.slot;
+      if (slot.hidden) {
+        this.shaking.splice(i, 1);
+        continue;
+      }
       if (shake.timer <= 0) {
         slot.mesh.setMatrixAt(slot.index, slot.matrix);
         slot.mesh.instanceMatrix.needsUpdate = true;

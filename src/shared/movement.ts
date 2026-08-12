@@ -90,10 +90,10 @@ export function createPlayerState(world: WorldData): PlayerState {
 const scratch: Obstacle[] = [];
 
 /** Пытается встать в точку, расталкивая игрока со стволов. null — нельзя. */
-function resolve(world: WorldData, x: number, z: number): [number, number] | null {
+function resolve(world: WorldData, x: number, z: number, feetY: number): [number, number] | null {
   if (Math.abs(x) > WORLD.bound || Math.abs(z) > WORLD.bound) return null;
   // Над настилом моста глубина под ногами не важна.
-  const deck = platformAt(world.platforms, x, z);
+  const deck = platformAt(world.platforms, x, z, feetY);
   if (deck === null && world.terrain.depth(x, z) > PLAYER.maxWadeDepth) return null;
 
   let px = x;
@@ -126,7 +126,7 @@ function resolve(world: WorldData, x: number, z: number): [number, number] | nul
 
   // Ствол мог вытолкнуть в воду или за границу — тогда шаг не засчитываем.
   if (Math.abs(px) > WORLD.bound || Math.abs(pz) > WORLD.bound) return null;
-  if (platformAt(world.platforms, px, pz) === null && world.terrain.depth(px, pz) > PLAYER.maxWadeDepth + 0.15) {
+  if (platformAt(world.platforms, px, pz, feetY) === null && world.terrain.depth(px, pz) > PLAYER.maxWadeDepth + 0.15) {
     return null;
   }
   return [px, pz];
@@ -148,7 +148,7 @@ export function stepPlayer(state: PlayerState, input: MoveInput, world: WorldDat
     wishZ /= wishLen;
   }
 
-  const deck = platformAt(world.platforms, state.x, state.z);
+  const deck = platformAt(world.platforms, state.x, state.z, state.feetY);
   const depth = deck === null ? world.terrain.depth(state.x, state.z) : 0;
   state.wading = depth > 0.02;
   state.surface = deck === null ? world.terrain.surface(state.x, state.z) : 'grass';
@@ -193,14 +193,14 @@ export function stepPlayer(state: PlayerState, input: MoveInput, world: WorldDat
 
   const nx = state.x + state.vx * dt;
   const nz = state.z + state.vz * dt;
-  let pos = resolve(world, nx, nz);
+  let pos = resolve(world, nx, nz, state.feetY);
   if (!pos) {
     // Скользим вдоль препятствия, а не залипаем в нём.
-    pos = resolve(world, nx, state.z);
+    pos = resolve(world, nx, state.z, state.feetY);
     if (pos) state.vz = 0;
   }
   if (!pos) {
-    pos = resolve(world, state.x, nz);
+    pos = resolve(world, state.x, nz, state.feetY);
     if (pos) state.vx = 0;
   }
   if (pos) {

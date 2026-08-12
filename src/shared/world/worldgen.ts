@@ -159,7 +159,8 @@ export function generateWorld(seedInput: string | number): WorldData {
       const tree: TreeInstance = {
         x,
         z,
-        y: terrain.height(x, z),
+        // Комель чуть прикопан: на склоне дерево иначе стоит на одной кромке.
+        y: terrain.height(x, z) - 0.12 * scale,
         rot: rng() * Math.PI * 2,
         scale,
         type,

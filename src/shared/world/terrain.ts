@@ -40,6 +40,8 @@ export class Terrain {
   private readonly detail: ValueNoise;
   /** Высота вершины: по ней ровняется площадка под беседку. */
   private readonly summitY: number;
+  /** Высота поляны у хижины: берётся от окружающего рельефа. */
+  private readonly clearingY: number;
   /** Естественная высота склона в узлах ущелья — от неё режется дно. */
   private readonly gorgeBase: number[];
   /** Длины отрезков оси ущелья и общая длина: по ним считается глубина. */
@@ -56,10 +58,17 @@ export class Terrain {
     this.detail = new ValueNoise(s ^ 0x9e3779b9);
     this.hills = caveSites(s);
     this.summitY = this.land(MOUNTAIN.x, MOUNTAIN.z) + this.mountain(MOUNTAIN.x, MOUNTAIN.z);
+    // Поляну ровняем по своей же округе, а не по фиксированному числу: иначе
+    // с новым рельефом она оказывается то в яме, то на столбе.
+    this.clearingY = this.land(WORLD.clearing.x, WORLD.clearing.z);
 
     // Дно ущелья режется от нетронутого склона, поэтому его высоту в узлах
     // считаем заранее: иначе получится рекурсия «высота внутри высоты».
-    this.gorgeBase = GORGE.path.map(([x, z]) => this.land(x, z) + this.mountain(x, z));
+    // Отсчёт ведём от той земли, что получается уже с долиной реки: у входа
+    // склон ею просажен, и без этого «ровное дно» считалось бы от воздуха.
+    this.gorgeBase = GORGE.path.map(([x, z]) =>
+      this.riverValley(this.land(x, z) + this.mountain(x, z), x, z),
+    );
     this.gorgeSpan = [];
     let total = 0;
     for (let i = 0; i < GORGE.path.length - 1; i++) {
@@ -132,7 +141,11 @@ export class Terrain {
         // Насколько далеко от входа: у самого входа не режем вовсе.
         const along = (travelled + this.gorgeSpan[i] * t) / this.gorgeLength;
         const cut = GORGE.depth * smoothstep(0, 0.24, along);
-        bestFloor = lerp(this.gorgeBase[i], this.gorgeBase[i + 1], t) - cut;
+        const natural = lerp(this.gorgeBase[i], this.gorgeBase[i + 1], t) - cut;
+        // Дно идёт почти ровно, а не повторяет склон: иначе по щели надо
+        // взбираться на тридцать метров, а стены наоборот низкие.
+        const gentle = this.gorgeBase[0] + along * this.gorgeLength * GORGE.rise;
+        bestFloor = Math.min(natural, gentle);
       }
       travelled += this.gorgeSpan[i];
     }
@@ -143,15 +156,48 @@ export class Terrain {
     return Math.min(h, lerp(bestFloor, h, blend));
   }
 
-  /** Холмы без гор, рек и площадок — основа, от которой всё считается. */
+  /**
+   * Холмы без гор, рек и площадок — основа, от которой всё считается.
+   *
+   * Рельеф нарочно только поднимается от уровня озера: низины остаются у воды,
+   * а не проваливаются ниже неё. Четыре слоя — широкие валы, средние горбы,
+   * хребты и мелкая рябь — дают лес, по которому идёшь то вверх, то вниз, а не
+   * ровный стол с редкими бугорками.
+   */
   private land(x: number, z: number): number {
+    // Широкие валы: главный рисунок местности, длина волны около 240 метров.
+    const broad = this.noise.fbm(x * 0.0042, z * 0.0042, 4);
+    // Средние горбы поверх валов.
+    const medium = this.noise.fbm(x * 0.017, z * 0.017, 3);
+    // Хребты: из шума делаем гребень, иначе всё вокруг только круглые купола.
+    const ridge = 1 - Math.abs(this.detail.fbm(x * 0.0075, z * 0.0075, 3) * 2 - 1);
+    // Мелкая рябь под ногами.
+    const fine = this.detail.fbm(x * 0.062, z * 0.062, 2);
+
     const hills =
       LAND_BASE +
-      (this.noise.fbm(x * 0.011, z * 0.011, 4) - 0.5) * 3.6 +
-      (this.detail.fbm(x * 0.055, z * 0.055, 2) - 0.5) * 0.9;
-    const beach = smoothstep(WORLD.lakeHalf, WORLD.lakeHalf + 26, Terrain.lakeDistance(x, z));
-    // Бугры с пещерами: без них в ровном лесу ходу взяться неоткуда.
+      broad * broad * 19 +
+      medium * medium * 6.5 +
+      ridge * ridge * ridge * 8 +
+      (fine - 0.5) * 1.5;
+
+    // Пляж переходит в лес полосой пошире: иначе вокруг озера встаёт стена.
+    const beach = smoothstep(WORLD.lakeHalf, WORLD.lakeHalf + 52, Terrain.lakeDistance(x, z));
+    // Бугры с пещерами: в них и прокопаны ходы.
     return lerp(WORLD.shoreHeight, hills + caveHills(this.hills, x, z), beach);
+  }
+
+  /**
+   * Долина Псекупса: округу тянет вниз к воде. Без этого река с новым
+   * рельефом текла бы по дну двадцатиметрового каньона, а мост оказался бы
+   * закопан в его стену.
+   */
+  private riverValley(h: number, x: number, z: number): number {
+    const d = Terrain.riverDistance(x, z);
+    const wide = RIVER.bank * 3.6;
+    if (d > wide) return h;
+    const pull = 1 - smoothstep(RIVER.bank * 1.1, wide, d);
+    return lerp(h, Math.min(h, RIVER.level + 2.4), pull);
   }
 
   /** Расстояние по Чебышёву — из-за него озеро выходит идеально квадратным. */
@@ -230,6 +276,9 @@ export class Terrain {
     // Гора: к самой кромке озера сходит на нет, чтобы пляж остался пляжем.
     h += this.mountain(x, z) * smoothstep(WORLD.lakeHalf, WORLD.lakeHalf + 8, d);
 
+    // Долина реки идёт до всех площадок: полка тарзанки и щель режутся поверх.
+    h = this.riverValley(h, x, z);
+
     // Ровная площадка под беседкой: иначе она висит одним углом в воздухе.
     const md = Math.hypot(x - MOUNTAIN.x, z - MOUNTAIN.z);
     if (md < MOUNTAIN.gazeboRadius * 3) {
@@ -245,9 +294,10 @@ export class Terrain {
     // Поляна под хижину — ровная площадка.
     const c = WORLD.clearing;
     const cd = Math.hypot(x - c.x, z - c.z);
-    if (cd < c.r + 8) {
-      const flat = 1 - smoothstep(c.r - 3, c.r + 8, cd);
-      h = lerp(h, 0.95, flat);
+    if (cd < c.r + 26) {
+      // Поляна ровная, но съезд к ней теперь длинный: вокруг холмы.
+      const flat = 1 - smoothstep(c.r - 3, c.r + 26, cd);
+      h = lerp(h, this.clearingY, flat);
     }
     return h;
   }
