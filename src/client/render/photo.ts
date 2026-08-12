@@ -13,7 +13,7 @@ import type { Terrain } from '../../shared/world/terrain';
 /** Где искать снимок. Положи файл сюда — он подхватится сам. */
 const PHOTO_URL = 'photos/gorge.png';
 /** Размер снимка в метрах: он нарочно маленький. */
-const SIZE = 0.42;
+const SIZE = 0.5;
 
 export function buildGorgePhoto(terrain: Terrain): THREE.Group {
   const group = new THREE.Group();
@@ -30,10 +30,12 @@ export function buildGorgePhoto(terrain: Terrain): THREE.Group {
   // Нормаль к оси: по ней отходим к стене и в неё же смотрим лицом снимка.
   const nx = -dz / length;
   const nz = dx / length;
-  const offset = GORGE.halfWidth + 0.15;
+  // Рамка висит у самой кромки прохода, а не на склоне за ним: за кромкой
+  // стена уже поднимается, и снимок оказывался закопан выше головы.
+  const offset = GORGE.halfWidth - 0.15;
   const x = mx + nx * offset;
   const z = mz + nz * offset;
-  const y = terrain.height(mx, mz) + 1.75;
+  const y = terrain.height(mx, mz) + 1.55;
 
   group.position.set(x, y, z);
   // Снимок смотрит внутрь щели, то есть против нормали.
@@ -54,7 +56,13 @@ export function buildGorgePhoto(terrain: Terrain): THREE.Group {
 
   const photo = new THREE.Mesh(
     new THREE.PlaneGeometry(SIZE, SIZE),
-    new THREE.MeshStandardMaterial({ roughness: 0.6, transparent: true }),
+    new THREE.MeshStandardMaterial({
+      roughness: 0.6,
+      transparent: true,
+      // Своё слабое свечение: в тени щели тёмный снимок иначе просто пропадает.
+      emissive: 0xffffff,
+      emissiveIntensity: 0.35,
+    }),
   );
   photo.position.z = 0.019;
   photo.visible = false;
@@ -72,6 +80,7 @@ export function buildGorgePhoto(terrain: Terrain): THREE.Group {
       texture.colorSpace = THREE.SRGBColorSpace;
       const material = photo.material as THREE.MeshStandardMaterial;
       material.map = texture;
+      material.emissiveMap = texture;
       material.needsUpdate = true;
       photo.visible = true;
     },
