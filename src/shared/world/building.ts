@@ -5,7 +5,17 @@ import type { Terrain } from './terrain';
 import { Terrain as TerrainClass } from './terrain';
 import type { WorldData } from './worldgen';
 
-export type BlueprintId = 'press' | 'cellar' | 'palisade' | 'gate' | 'chest' | 'pier' | 'smokehouse' | 'vine';
+export type BlueprintId =
+  | 'press'
+  | 'cellar'
+  | 'palisade'
+  | 'gate'
+  | 'chest'
+  | 'pier'
+  | 'smokehouse'
+  | 'dryer'
+  | 'filter'
+  | 'vine';
 
 export interface Blueprint {
   name: string;
@@ -98,6 +108,26 @@ export const BLUEPRINTS: Record<BlueprintId, Blueprint> = {
     solid: false,
     onWater: true,
   },
+  dryer: {
+    name: 'Сушилка для шкур',
+    hint: 'Шкуры сохнут сутки и становятся кожей',
+    logs: 5,
+    stones: 0,
+    hw: 1.3,
+    hd: 0.5,
+    height: 2.1,
+    solid: true,
+  },
+  filter: {
+    name: 'Очиститель воды',
+    hint: 'Мутная вода из озера и реки становится питьевой',
+    logs: 4,
+    stones: 8,
+    hw: 0.8,
+    hd: 0.8,
+    height: 1.7,
+    solid: true,
+  },
   smokehouse: {
     name: 'Коптильня',
     hint: 'Копчёная рыба стоит вдвое дороже',
@@ -126,6 +156,10 @@ export interface PlacedStructure {
   barrels?: { amount: number; startedDay: number }[];
   /** Лоза: день последнего сбора. */
   pickedDay?: number | null;
+  /** Сушилка: шкуры и день, когда их развесили. */
+  hides?: { count: number; startedDay: number }[];
+  /** Очиститель: сколько мутной залито, сколько чистой готово и таймер. */
+  water?: { dirty: number; clean: number; timer: number };
 }
 
 export const CHEST_SLOTS = 24;

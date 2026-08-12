@@ -30,6 +30,11 @@ export const LAND_BASE = 1.9;
  * Значит клиент и сервер получают одинаковую землю из одного сида.
  */
 export class Terrain {
+  /**
+   * Зимой озеро встаёт: по нему можно ходить, а рыбалка отменяется.
+   * Флаг ставит игра по календарю — рельефу знать про часы незачем.
+   */
+  frozen = false;
   private readonly noise: ValueNoise;
   private readonly detail: ValueNoise;
   /** Высота вершины: по ней ровняется площадка под беседку. */
@@ -170,7 +175,8 @@ export class Terrain {
 
   /** Уровень воды в точке: озеро, река или суша. */
   waterLevelAt(x: number, z: number): number | null {
-    if (Terrain.lakeDistance(x, z) < WORLD.lakeHalf) return WORLD.waterLevel;
+    // По льду ходят как по земле.
+    if (Terrain.lakeDistance(x, z) < WORLD.lakeHalf) return this.frozen ? null : WORLD.waterLevel;
     if (Terrain.riverDistance(x, z) < RIVER.bank) return RIVER.level;
     return null;
   }
@@ -185,7 +191,7 @@ export class Terrain {
   surface(x: number, z: number): Surface {
     const d = Terrain.lakeDistance(x, z);
     const h = this.height(x, z);
-    if (d < WORLD.lakeHalf && h < WORLD.waterLevel) return 'water';
+    if (d < WORLD.lakeHalf && h < WORLD.waterLevel) return this.frozen ? 'sand' : 'water';
     if (d < WORLD.lakeHalf + 2.5 && h < WORLD.shoreHeight + 0.35) return 'sand';
     const rd = Terrain.riverDistance(x, z);
     if (rd < RIVER.bank && h < RIVER.level) return 'water';

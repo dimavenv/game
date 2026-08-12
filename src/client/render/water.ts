@@ -11,6 +11,7 @@ import type { QualitySettings } from '../quality';
 
 const VERT = /* glsl */ `
   uniform float uTime;
+  uniform float uIce;
   attribute float aEdge;
   attribute vec2 aFlow;
   varying vec3 vWorld;
@@ -21,11 +22,11 @@ const VERT = /* glsl */ `
 
   void main() {
     vec3 p = position;
-    float w =
+    float w = (1.0 - uIce) * (
       sin(p.x * 0.55 + uTime * 0.9) * 0.035 +
       sin(p.z * 0.47 - uTime * 0.7) * 0.03 +
       sin((p.x + p.z) * 1.1 + uTime * 1.6) * 0.012 +
-      sin((p.x - p.z) * 2.3 - uTime * 2.1) * 0.006;
+      sin((p.x - p.z) * 2.3 - uTime * 2.1) * 0.006);
     // У берега волна затухает: там воде негде разгуляться.
     w *= clamp(aEdge * 0.35, 0.15, 1.0);
     p.y += w;
@@ -50,6 +51,7 @@ const FRAG = /* glsl */ `
   uniform float uSunI;
   uniform float uTime;
   uniform float uShoreSpan;
+  uniform float uIce;
   varying vec3 vWorld;
   varying float vWave;
   varying float vEdge;
@@ -109,8 +111,18 @@ const FRAG = /* glsl */ `
     float foam = clamp(foamBand * (0.45 + ripple * 0.9), 0.0, 1.0);
     col = mix(col, vec3(0.92, 0.95, 0.96), foam * 0.65);
 
+    // Лёд: белёсая корка с трещинами, бликов и пены нет.
+    if (uIce > 0.001) {
+      float cracks = vnoise(vWorld.xz * 0.6);
+      float grain = vnoise(vWorld.xz * 3.1);
+      vec3 ice = mix(vec3(0.72, 0.82, 0.88), vec3(0.88, 0.93, 0.97), grain);
+      ice = mix(ice, vec3(0.55, 0.66, 0.74), smoothstep(0.62, 0.68, cracks));
+      col = mix(col, ice, uIce);
+    }
+
     float alpha = mix(0.95, 0.72, shore);
-    gl_FragColor = vec4(col, max(alpha, foam * 0.9));
+    alpha = mix(alpha, 1.0, uIce);
+    gl_FragColor = vec4(col, max(alpha, foam * 0.9 * (1.0 - uIce)));
     #include <fog_fragment>
     #include <tonemapping_fragment>
     #include <colorspace_fragment>
@@ -131,6 +143,7 @@ export class WaterSurface {
       uDeep: { value: new THREE.Color(colors[1]) },
       uSunI: { value: 1 },
       uShoreSpan: { value: shoreSpan },
+      uIce: { value: 0 },
       ...THREE.UniformsLib.fog,
     };
 
@@ -147,6 +160,11 @@ export class WaterSurface {
     );
     this.mesh.position.y = level;
     this.mesh.frustumCulled = false;
+  }
+
+  /** Насколько поверхность схвачена льдом: 0 — вода, 1 — каток. */
+  setIce(amount: number): void {
+    this.uniforms.uIce.value = amount;
   }
 
   update(dt: number, sunDir: THREE.Vector3, sunColor: THREE.Color, skyColor: THREE.Color, sunI: number): void {

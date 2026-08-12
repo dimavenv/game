@@ -148,6 +148,33 @@ function geometryFor(kind: BlueprintId): THREE.BufferGeometry {
         post(0.16, 0.5, 0x4a4038, 0, 1.8, 0, 6),
         box(0.7, 0.6, 0.1, 0x3a2c22, 0, 0.55, 0.81),
       ]);
+
+    case 'dryer': {
+      // Рама на двух стойках, поперечина и растянутые на ней шкуры.
+      const parts: THREE.BufferGeometry[] = [
+        post(0.1, 2.0, DARK_WOOD, -1.15, 0, 0),
+        post(0.1, 2.0, DARK_WOOD, 1.15, 0, 0),
+        box(2.6, 0.12, 0.12, WOOD, 0, 1.95, 0),
+        box(2.4, 0.08, 0.08, WOOD, 0, 1.2, 0),
+      ];
+      for (const dx of [-0.62, 0, 0.62]) {
+        parts.push(box(0.52, 0.72, 0.05, 0x8a6a48, dx, 1.5, 0));
+        parts.push(box(0.06, 0.16, 0.05, 0x6d5334, dx, 1.92, 0));
+      }
+      return merge(parts);
+    }
+
+    case 'filter': {
+      // Бочка на камнях, сверху воронка с углём и песком, снизу кран.
+      return merge([
+        box(1.4, 0.28, 1.4, STONE, 0, 0.14, 0),
+        post(0.5, 0.95, WOOD, 0, 0.28, 0, 10),
+        box(1.12, 0.1, 1.12, DARK_WOOD, 0, 1.25, 0),
+        post(0.34, 0.42, 0x8a6a48, 0, 1.3, 0, 8),
+        post(0.24, 0.16, 0x4a4038, 0, 1.72, 0, 8),
+        box(0.1, 0.1, 0.34, 0x6b6353, 0, 0.62, 0.5),
+      ]);
+    }
   }
 }
 

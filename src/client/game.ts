@@ -24,6 +24,7 @@ import {
   ANIMAL_NAME,
   damageAnimal,
   findAnimalTarget,
+  findCarcass,
   shotAnimals,
   spawnAnimals,
   stepAnimals,
@@ -44,7 +45,7 @@ import {
   drugMuffle,
   drugSpeed,
 } from '../shared/drugs';
-import type { ItemId } from '../shared/items';
+import { ITEMS, type ItemId } from '../shared/items';
 import {
   BLUEPRINTS,
   CHEST_SLOTS,
@@ -53,7 +54,16 @@ import {
   type BlueprintId,
   type PlacedStructure,
 } from '../shared/world/building';
-import { addItem, countItem, isOverloaded, removeItem } from '../shared/inventory';
+import {
+  addItem,
+  countItem,
+  insulation,
+  isOverloaded,
+  removeItem,
+  type ItemStack,
+} from '../shared/inventory';
+import { CRAFT, SEASONS, SURVIVAL } from '../shared/balance';
+import { SEASON_NAME, chill, lakeFrozen, seasonOf, seasonTint, snowAmount, temperature } from '../shared/season';
 import { createPlayerState, stepPlayer, type PlayerState } from '../shared/movement';
 import { questProgress } from '../shared/quests';
 import { clamp, mulberry32, smoothstep } from '../shared/rng';
@@ -83,6 +93,7 @@ import { aviAction, aviDialog, buravchikAction, buravchikDialog, tomerAction, to
 import { Input } from './input';
 import { AxeItem } from './items/axe';
 import { HammerItem } from './items/hammer';
+import { KnifeItem } from './items/knife';
 import { CigaretteItem } from './items/cigarette';
 import { DrugKit } from './items/drugkit';
 import { RodItem } from './items/rod';
@@ -108,6 +119,7 @@ import {
 } from './render/structures';
 import { buildCatamaran, type CatamaranBuild } from './render/catamaran';
 import { AnimalsView } from './render/animals';
+import { SeasonLook } from './render/season';
 import { buildBridge } from './render/bridge';
 import { buildGazebo, buildSwing, type GazeboBuild, type SwingBuild } from './render/mountain';
 import { RopeSwing } from './ropeswing';
@@ -130,7 +142,21 @@ const STEP_LENGTH = 1.75;
 /** Высота глаз, когда игрок сидит в кресле. */
 const SEAT_EYE = 1.12;
 
-type Slot = 1 | 2 | 3 | 4 | 5 | 6;
+type Slot = 1 | 2 | 3 | 4 | 5 | 6 | 7;
+
+/** Подпись быстрой ячейки: иконка и остаток. */
+function quickLabel(stack: ItemStack | null): string {
+  if (!stack) return '—';
+  return `${ITEMS[stack.id].icon} ${stack.count}`;
+}
+
+/** Долгое действие на месте: разделка, сушка, готовка. */
+interface Chore {
+  label: string;
+  time: number;
+  total: number;
+  done: () => void;
+}
 
 /** Куда игрок сел: кресло в хижине или сиденье катамарана. */
 interface SeatSpot {
@@ -171,6 +197,7 @@ export class Game {
   private readonly swingRig: SwingBuild;
   private readonly ropeSwing: RopeSwing;
   private readonly chopEffects = new ChopEffects();
+  private readonly season = new SeasonLook();
   private readonly appleTrees: AppleTreeHandle[] = [];
   private readonly npcs: { buravchik: NpcHandle; tomer: NpcHandle; avi: NpcHandle };
   private readonly aviLantern: THREE.PointLight;
@@ -182,6 +209,7 @@ export class Game {
   private readonly rod: RodItem;
   private readonly shotgun: ShotgunItem;
   private readonly hammer: HammerItem;
+  private readonly knife: KnifeItem;
   private readonly drugKit: DrugKit;
   private readonly placed = new PlacedStructures();
   private readonly inventoryScreen = new InventoryScreen();
@@ -214,6 +242,7 @@ export class Game {
   private bob = 0;
   private slot: Slot = 1;
   private seat: SeatSpot | null = null;
+  private chore: Chore | null = null;
   private target: Target | null = null;
   private dying = false;
   private deathTimer = 0;
@@ -221,6 +250,8 @@ export class Game {
   private bandaging = 0;
   private groanTimer = 0;
   private saveTimer = 0;
+  /** После воскрешения игрок какое-то время неуязвим: иначе смерть по кругу. */
+  private graceTimer = 0;
   private wasDark = false;
   private signSeen = false;
   /** Диалог закрыт, ждём клика: браузер не даёт вернуть захват мыши сразу после Esc. */
@@ -362,6 +393,7 @@ export class Game {
     this.rod = new RodItem(this.camera, this.scene, this.audio, this.rng);
     this.shotgun = new ShotgunItem(this.camera);
     this.hammer = new HammerItem(this.camera);
+    this.knife = new KnifeItem(this.camera);
     this.drugKit = new DrugKit(this.camera, this.audio, this.smoke);
     this.scene.add(this.zombieView.group);
     this.scene.add(this.placed.group);
@@ -447,6 +479,9 @@ export class Game {
       (window as unknown as { game: Game }).game = this;
     }
 
+    // Все обычные материалы сцены получают сезонный оттенок и снег.
+    this.season.attachAll(this.scene);
+
     // Постобработка нужна только там, где есть что подсвечивать.
     if (q.bloom > 0 || q.samples > 0) {
       this.post = new PostFx(this.renderer, this.scene, this.camera, q);
@@ -520,8 +555,10 @@ export class Game {
     this.drugKit.update(dt);
     if (this.axe.update(dt)) this.applyAxeHit();
     if (this.hammer.update(dt)) this.applyHammerHit();
+    this.knife.update(dt);
     if (this.shotgun.update(dt) === 'reload-done') this.finishReload();
     if (this.bandaging > 0) this.bandaging -= dt;
+    if (this.graceTimer > 0) this.graceTimer -= dt;
     if (this.hurtFlash > 0) this.hurtFlash = Math.max(0, this.hurtFlash - dt * 1.6);
     this.handleRod(dt);
     this.syncCamera(dt);
@@ -546,7 +583,7 @@ export class Game {
 
     if (this.seat && (forward !== 0 || strafe !== 0)) this.seat = null;
 
-    if (!this.seat && !this.ropeSwing.active) {
+    if (!this.seat && !this.ropeSwing.active && !this.chore) {
       const breathMax = this.breathMax();
       this.accumulator += dt;
       let steps = 0;
@@ -560,6 +597,7 @@ export class Game {
             jump: this.input.isDown('Space'),
             overloaded: isOverloaded(this.state.inventory),
             noBreathDrain: drugBreathFree(this.state.effects),
+            weak: this.player.hunger <= SURVIVAL.weakAt || this.player.thirst <= SURVIVAL.weakAt,
             dt: FIXED_DT,
             slowFactor: this.cigarette.speedMul * drugSpeed(this.state.effects, this.clock.day),
             breathMax,
@@ -575,8 +613,13 @@ export class Game {
     }
 
     this.updateSwing(dt);
+    this.updateChore(dt);
 
-    this.target = this.interactions.find(this.player, this.state, this.clock.day);
+    let target = this.interactions.find(this.player, this.state, this.clock.day);
+    // Туша и вода живут вне статичных точек мира, их ищем отдельно.
+    const extra = this.carcassTarget() ?? this.campfireTarget() ?? this.waterSpot();
+    if (extra && (!target || extra.priority > target.priority)) target = extra;
+    this.target = target;
     if (this.input.wasPressed('KeyE')) this.interact();
 
     const previousDay = this.clock.day;
@@ -593,6 +636,8 @@ export class Game {
     }
 
     this.updateAnimals(dt);
+    this.updateFilters(dt * scale);
+    this.updateSurvival(dt * scale);
     this.updateDrugs(dt);
     this.updateAviAudio();
 
@@ -619,6 +664,7 @@ export class Game {
       this.rod.setVisible(false);
       this.shotgun.setVisible(false);
       this.hammer.setVisible(false);
+      this.knife.setVisible(false);
       this.flashlight.intensity = 0;
       return;
     }
@@ -639,16 +685,20 @@ export class Game {
     if (this.input.wasPressed('Digit4')) pick(4, inv.hasRod, 'Удочки нет — у Томера 200 ₪');
     if (this.input.wasPressed('Digit5')) pick(5, inv.hasFlashlight, 'Фонарика нет — у Томера 150 ₪');
     if (this.input.wasPressed('Digit6')) pick(6, inv.hasHammer, 'Молота нет — у Томера 280 ₪');
+    if (this.input.wasPressed('Digit7')) pick(7, inv.hasKnife, 'Ножа нет — у Томера 120 ₪');
     if (this.input.wasPressed('Tab')) this.openBackpack();
     if (this.input.wasPressed('KeyB')) this.toggleBuildMode();
     if (this.input.wasPressed('KeyR') && this.slot === 3) this.reloadShotgun();
     if (this.input.wasPressed('KeyQ')) this.useBandage();
+    if (this.input.wasPressed('KeyF')) this.eatFromSlot();
+    if (this.input.wasPressed('KeyG')) this.drinkFromSlot();
 
     this.cigarette.setHidden(this.slot !== 1);
     this.axe.setVisible(this.slot === 2);
     this.rod.setVisible(this.slot === 4);
     this.shotgun.setVisible(this.slot === 3 && inv.hasShotgun);
     this.hammer.setVisible(this.slot === 6 && inv.hasHammer);
+    this.knife.setVisible(this.slot === 7 && inv.hasKnife);
     if (this.buildMode && this.slot !== 6) this.setBuildMode(false);
     this.flashlight.intensity = this.slot === 5 && inv.hasFlashlight ? 10 : 0;
   }
@@ -683,6 +733,8 @@ export class Game {
 
   /** Куда смотрит игрок на воде: точка заброса поплавка. */
   private waterTarget(): THREE.Vector3 | null {
+    // Сквозь лёд не закинешь.
+    if (this.world.terrain.frozen) return null;
     this.raycaster.setFromCamera(this.screenCenter, this.camera);
     this.raycaster.far = FISHING.castRange;
     const hit = this.raycaster.intersectObject(this.water.mesh, false)[0];
@@ -790,7 +842,7 @@ export class Game {
   }
 
   private interact(): void {
-    if (this.ropeSwing.active || this.state.effects.using) return;
+    if (this.ropeSwing.active || this.state.effects.using || this.chore) return;
     const target = this.target;
     if (!target) return;
 
@@ -845,6 +897,15 @@ export class Game {
       }
       case 'swing':
         this.startSwing();
+        break;
+      case 'carcass':
+        this.startButcher(target.index);
+        break;
+      case 'water':
+        this.fillBottle();
+        break;
+      case 'campfire':
+        this.startCooking();
         break;
       default:
         break;
@@ -1039,6 +1100,17 @@ export class Game {
     this.npcs.buravchik.update(dt);
     this.npcs.tomer.update(dt);
 
+    // Календарь: лёд на озере, снег и цвет сезона.
+    const day = this.clock.day;
+    const t = this.clock.t;
+    this.world.terrain.frozen = lakeFrozen(day, t);
+    const snow = snowAmount(day, t);
+    const tint = seasonTint(day, t);
+    this.season.set(snow, tint);
+    // Лёд встаёт не мгновенно: корка нарастает вместе со снегом.
+    this.water.setIce(clamp((snow - SEASONS.freezeAt) * 3, 0, 1));
+    this.river.setIce(clamp((snow - SEASONS.freezeAt - 0.15) * 3, 0, 1));
+
     // Дверь хижины сама распахивается перед подошедшим.
     const door = this.world.hut.door;
     const atDoor =
@@ -1126,9 +1198,13 @@ export class Game {
   private hintText(): string {
     if (this.ropeSwing.active) return this.ropeSwing.hint;
     if (this.drugKit.active) return this.drugKit.hint;
+    if (this.chore) {
+      const done = Math.round((1 - this.chore.time / this.chore.total) * 100);
+      return `${this.chore.label}… ${done}%`;
+    }
     if (this.seat) return 'W — встать';
     if (this.target && this.target.distance < INTERACT.npcRange) return this.target.hint;
-    if (this.slot === 4) return this.rod.hint();
+    if (this.slot === 4) return this.world.terrain.frozen ? 'Озеро подо льдом' : this.rod.hint();
     if (this.buildMode) return `${BLUEPRINTS[this.buildKind].name}: ЛКМ — поставить`;
     if (this.slot === 6) return 'ЛКМ — разбить валун · B — стройка';
     if (this.slot === 3) return this.shotgun.hint(countItem(this.state.inventory, 'shells'));
@@ -1280,6 +1356,7 @@ export class Game {
   }
 
   private takeDamage(amount: number): void {
+    if (this.graceTimer > 0) return;
     const effects = this.state.effects;
     // Под ударом не поколешься: доза теряется.
     if (effects.using) this.interruptDrug();
@@ -1333,7 +1410,22 @@ export class Game {
     this.player.eyeY = this.world.hut.floorY + PLAYER.eyeHeight;
     this.dying = false;
     this.seat = null;
+    this.graceTimer = 8;
     this.cigarette.resetDay();
+
+    // Всех, кто топчется у хижины, разгоняем: иначе игрока добьют на месте.
+    for (const animal of this.animals) {
+      if (animal.state === 'dead') continue;
+      const d = Math.hypot(animal.x - this.player.x, animal.z - this.player.z);
+      if (d > 45) continue;
+      const away = Math.atan2(animal.x - this.player.x, animal.z - this.player.z);
+      animal.x = this.player.x + Math.sin(away) * 60;
+      animal.z = this.player.z + Math.cos(away) * 60;
+      animal.homeX = animal.x;
+      animal.homeZ = animal.z;
+      animal.state = 'graze';
+      animal.timer = 5;
+    }
 
     this.toasts.push(
       `Буравчик дотащил тебя до хижины. Минус ${lost} ₪` + (catchSize > 0 ? ` и весь улов` : ''),
@@ -1577,8 +1669,183 @@ export class Game {
       case 'vine':
         this.pickPlantedGrapes(structure);
         break;
+      case 'dryer':
+        this.openDryer(structure);
+        break;
+      case 'filter':
+        this.openFilter(structure);
+        break;
       default:
         break;
+    }
+  }
+
+  /** Сушилка: шкуры висят сутки, потом с них шьют одежду. */
+  private dryerDialog(structure: PlacedStructure): DialogSpec {
+    const day = this.clock.day;
+    const inv = this.state.inventory;
+    const hides = structure.hides ?? [];
+    const drying = hides.reduce((n, h) => n + (day - h.startedDay >= CRAFT.dryDays ? 0 : h.count), 0);
+    const ready = hides.reduce((n, h) => n + (day - h.startedDay >= CRAFT.dryDays ? h.count : 0), 0);
+    const raw = countItem(inv, 'hide_raw');
+    const leather = countItem(inv, 'leather');
+
+    const actions: { id: string; label: string; note: string; disabled: boolean }[] = [
+      {
+        id: 'hang',
+        label: `Развесить шкуры (${raw})`,
+        note: raw > 0 ? `сохнут ${CRAFT.dryDays} сут.` : 'сырых шкур нет',
+        disabled: raw <= 0,
+      },
+      { id: 'take', label: `Снять кожу (${ready})`, note: ready > 0 ? '' : 'ещё сохнет', disabled: ready <= 0 },
+    ];
+
+    for (const [id, spec] of Object.entries(CRAFT.clothes)) {
+      const worn = inv.worn[id as keyof typeof inv.worn];
+      actions.push({
+        id: `sew-${id}`,
+        label: `Сшить: ${ITEMS[id as ItemId].name}`,
+        note: worn ? 'уже носишь' : `кожа ${leather}/${spec.leather}`,
+        disabled: worn || leather < spec.leather,
+      });
+    }
+
+    actions.push({ id: 'leave', label: 'Отойти', note: '', disabled: false });
+
+    return {
+      title: 'Сушилка для шкур',
+      speech: drying > 0 ? `На жердях сохнет шкур: ${drying}.` : 'Пустые жерди ждут добычу.',
+      actions,
+      footer: `Готовой кожи на сушилке: ${ready}`,
+    };
+  }
+
+  private openDryer(structure: PlacedStructure): void {
+    const spec = (): DialogSpec => this.dryerDialog(structure);
+    this.openDialog(spec, (id) => {
+      const inv = this.state.inventory;
+      const day = this.clock.day;
+      if (id === 'hang') {
+        const raw = countItem(inv, 'hide_raw');
+        if (raw <= 0) return false;
+        removeItem(inv, 'hide_raw', raw);
+        structure.hides = structure.hides ?? [];
+        structure.hides.push({ count: raw, startedDay: day });
+        this.toasts.push(`Развесил шкур: ${raw}`);
+        return false;
+      }
+      if (id === 'take') {
+        const hides = structure.hides ?? [];
+        let ready = 0;
+        structure.hides = hides.filter((h) => {
+          if (day - h.startedDay < CRAFT.dryDays) return true;
+          ready += h.count;
+          return false;
+        });
+        if (ready <= 0) return false;
+        const left = addItem(inv, 'leather', ready);
+        if (left > 0) structure.hides.push({ count: left, startedDay: day - CRAFT.dryDays });
+        this.audio.pickup();
+        this.toasts.push(left > 0 ? 'Кожа не влезла целиком' : `Кожа: +${ready}`, left > 0 ? 'bad' : 'normal');
+        return false;
+      }
+      if (id.startsWith('sew-')) {
+        const key = id.slice(4) as keyof typeof CRAFT.clothes;
+        const recipe = CRAFT.clothes[key];
+        if (countItem(inv, 'leather') < recipe.leather) return false;
+        removeItem(inv, 'leather', recipe.leather);
+        if (addItem(inv, key as ItemId, 1) > 0) {
+          this.toasts.push('В рюкзаке нет места', 'bad');
+          addItem(inv, 'leather', recipe.leather);
+          return false;
+        }
+        this.audio.pickup();
+        this.toasts.push(`Сшито: ${ITEMS[key as ItemId].name}. Надень в рюкзаке`);
+        return false;
+      }
+      return id === 'leave';
+    });
+  }
+
+  /** Очиститель: мутная вода капает через уголь и песок и становится питьевой. */
+  private filterDialog(structure: PlacedStructure): DialogSpec {
+    const inv = this.state.inventory;
+    const tank = structure.water ?? { dirty: 0, clean: 0, timer: 0 };
+    const dirty = countItem(inv, 'water_dirty');
+    const left = tank.dirty > 0 ? Math.ceil(tank.timer) : 0;
+
+    return {
+      title: 'Очиститель воды',
+      speech:
+        tank.dirty > 0
+          ? `Вода сочится сквозь уголь. Осталось ${left} с.`
+          : 'Залей мутную воду — через уголь и песок она станет питьевой.',
+      actions: [
+        {
+          id: 'pour',
+          label: `Залить мутную (${dirty})`,
+          note: dirty > 0 ? `по ${CRAFT.purifySeconds} с на бутылку` : 'мутной воды нет',
+          disabled: dirty <= 0,
+        },
+        {
+          id: 'take',
+          label: `Забрать чистую (${tank.clean})`,
+          note: tank.clean > 0 ? '' : 'ещё не готова',
+          disabled: tank.clean <= 0,
+        },
+        { id: 'leave', label: 'Отойти' },
+      ],
+      footer: `В баке мутной: ${tank.dirty}`,
+    };
+  }
+
+  private openFilter(structure: PlacedStructure): void {
+    structure.water = structure.water ?? { dirty: 0, clean: 0, timer: 0 };
+    const spec = (): DialogSpec => this.filterDialog(structure);
+    this.openDialog(spec, (id) => {
+      const inv = this.state.inventory;
+      const tank = structure.water!;
+      if (id === 'pour') {
+        const dirty = countItem(inv, 'water_dirty');
+        if (dirty <= 0) return false;
+        removeItem(inv, 'water_dirty', dirty);
+        // Бутылки остаются у игрока: очиститель отдаёт воду в свои же.
+        if (tank.dirty === 0) tank.timer = CRAFT.purifySeconds;
+        tank.dirty += dirty;
+        this.audio.splash(0.3);
+        this.toasts.push(`Залил бутылок: ${dirty}`);
+        return false;
+      }
+      if (id === 'take') {
+        if (tank.clean <= 0) return false;
+        if (countItem(inv, 'bottle_empty') < tank.clean) {
+          this.toasts.push('Не хватает пустых бутылок', 'bad');
+          return false;
+        }
+        const take = tank.clean;
+        removeItem(inv, 'bottle_empty', take);
+        const over = addItem(inv, 'water_clean', take);
+        if (over > 0) addItem(inv, 'bottle_empty', over);
+        tank.clean = over;
+        this.audio.pickup();
+        this.toasts.push(`Чистая вода: +${take - over}`, over > 0 ? 'bad' : 'normal');
+        return false;
+      }
+      return id === 'leave';
+    });
+  }
+
+  /** Очистители капают сами по себе, даже когда игрок далеко. */
+  private updateFilters(dt: number): void {
+    for (const s of this.state.world.structures) {
+      if (s.kind !== 'filter' || !s.water) continue;
+      const tank = s.water;
+      if (tank.dirty <= 0) continue;
+      tank.timer -= dt;
+      if (tank.timer > 0) continue;
+      tank.dirty -= 1;
+      tank.clean += 1;
+      tank.timer = tank.dirty > 0 ? CRAFT.purifySeconds : 0;
     }
   }
 
@@ -1758,10 +2025,31 @@ export class Game {
       this.useBandage();
       return;
     }
-    if (id === 'apple') {
-      if (removeItem(inv, 'apple', 1) <= 0) return;
-      this.player.health = Math.min(PLAYER.maxHealth, this.player.health + 6);
-      this.toasts.push('Съел яблоко');
+    // Одежду по правой кнопке надевают.
+    if (id === 'coat' || id === 'hat' || id === 'boots') {
+      if (inv.worn[id]) {
+        this.toasts.push('Уже надето', 'bad');
+        return;
+      }
+      if (removeItem(inv, id, 1) <= 0) return;
+      inv.worn[id] = true;
+      this.toasts.push(`Надел: ${ITEMS[id].name}`);
+      return;
+    }
+    if (id === 'water_dirty') {
+      this.toasts.push('Мутную воду не пьют. Нужен очиститель', 'bad');
+      return;
+    }
+    const drinkGain = Game.drinkValue(id);
+    if (drinkGain !== null) {
+      if (removeItem(inv, id, 1) <= 0) return;
+      this.applyDrink(id, drinkGain);
+      return;
+    }
+    const foodGain = Game.foodValue(id);
+    if (foodGain !== null) {
+      if (removeItem(inv, id, 1) <= 0) return;
+      this.applyFood(id, foodGain);
       return;
     }
     const drug = DRUG_BY_ITEM[id];
@@ -1772,6 +2060,123 @@ export class Game {
     this.toasts.push('Это не едят', 'bad');
   }
 
+  /** Голод, жажда и тепло. Всё считается по игровому времени. */
+  private updateSurvival(dt: number): void {
+    const p = this.player;
+    const inv = this.state.inventory;
+    p.hunger = clamp(p.hunger - SURVIVAL.hungerDrain * dt, 0, SURVIVAL.max);
+    p.thirst = clamp(p.thirst - SURVIVAL.thirstDrain * dt, 0, SURVIVAL.max);
+
+    // У огня греешься, на морозе стынешь тем быстрее, чем хуже одет.
+    const fire = campfirePosition();
+    const nearFire =
+      Math.hypot(p.x - fire.x, p.z - fire.z) < 5.5 ||
+      (this.state.world.stoveFuel > 0 &&
+        Math.hypot(p.x - this.world.hut.x, p.z - this.world.hut.z) < 5);
+    const cold = chill(this.clock.day, this.clock.t, insulation(inv));
+    if (nearFire) {
+      p.warmth = clamp(p.warmth + SURVIVAL.warmthRegen * dt, 0, SURVIVAL.max);
+    } else {
+      p.warmth = clamp(p.warmth - SURVIVAL.warmthDrain * cold * dt, 0, SURVIVAL.max);
+    }
+
+    let drain = 0;
+    if (p.hunger <= 0) drain += SURVIVAL.starveDamage;
+    if (p.thirst <= 0) drain += SURVIVAL.starveDamage;
+    if (p.warmth <= 0) drain += SURVIVAL.freezeDamage;
+    if (drain > 0 && !this.dying && this.graceTimer <= 0) {
+      p.health -= drain * dt;
+      if (p.health <= 0) {
+        p.health = 0;
+        this.die();
+      }
+    }
+  }
+
+  /** Сколько сытости даёт вещь. null — не едят. */
+  private static foodValue(id: ItemId): number | null {
+    const table: Partial<Record<ItemId, number>> = {
+      apple: SURVIVAL.food.apple,
+      grape: SURVIVAL.food.grape,
+      meat: SURVIVAL.food.meat,
+      meat_cooked: SURVIVAL.food.meat_cooked,
+      fish_crucian: SURVIVAL.food.fish,
+      fish_perch: SURVIVAL.food.fish,
+      fish_bighead: SURVIVAL.food.fish,
+    };
+    return table[id] ?? null;
+  }
+
+  /** Сколько утоляет жажду. null — не пьют. */
+  private static drinkValue(id: ItemId): number | null {
+    if (id === 'water_clean') return SURVIVAL.drink.water_clean;
+    if (id === 'wine_young' || id === 'wine_aged' || id === 'wine_vintage') return SURVIVAL.drink.wine;
+    return null;
+  }
+
+  /** Общая часть: эффект от съеденного. Вещь к этому моменту уже списана. */
+  private applyFood(id: ItemId, gain: number): void {
+    this.player.hunger = clamp(this.player.hunger + gain, 0, SURVIVAL.max);
+    this.audio.pickup();
+    if (id === 'meat') {
+      // Сырое мясо и не насыщает, и подтравливает.
+      this.player.health = Math.max(1, this.player.health - SURVIVAL.rawMeatDamage);
+      this.hurtFlash = 0.6;
+      this.toasts.push('Съел сырое мясо. Живот крутит', 'bad');
+      return;
+    }
+    this.toasts.push(`Съел: ${ITEMS[id].name}`);
+  }
+
+  private applyDrink(id: ItemId, gain: number): void {
+    this.player.thirst = clamp(this.player.thirst + gain, 0, SURVIVAL.max);
+    // Из-под воды остаётся пустая бутылка.
+    if (id === 'water_clean') addItem(this.state.inventory, 'bottle_empty', 1);
+    this.audio.pickup();
+    this.toasts.push(`Выпил: ${ITEMS[id].name}`);
+  }
+
+  /** Съесть из быстрой ячейки. */
+  private eatFromSlot(): void {
+    const inv = this.state.inventory;
+    const stack = inv.food;
+    if (!stack) {
+      this.toasts.push('Ячейка еды пуста: положи туда еду в рюкзаке', 'bad');
+      return;
+    }
+    const gain = Game.foodValue(stack.id);
+    if (gain === null) {
+      this.toasts.push('Это не едят', 'bad');
+      return;
+    }
+    const id = stack.id;
+    stack.count -= 1;
+    if (stack.count <= 0) inv.food = null;
+    this.applyFood(id, gain);
+  }
+
+  /** Отпить из быстрой ячейки. */
+  private drinkFromSlot(): void {
+    const inv = this.state.inventory;
+    const stack = inv.drink;
+    if (!stack) {
+      this.toasts.push('Ячейка питья пуста', 'bad');
+      return;
+    }
+    const id = stack.id;
+    if (id === 'water_dirty') {
+      this.toasts.push('Мутную воду не пьют. Нужен очиститель', 'bad');
+      return;
+    }
+    const gain = Game.drinkValue(id);
+    if (gain === null) {
+      this.toasts.push('Это не пьют', 'bad');
+      return;
+    }
+    stack.count -= 1;
+    if (stack.count <= 0) inv.drink = null;
+    this.applyDrink(id, gain);
+  }
 
   /** Стадо: шаг поведения, голоса и удары кабана. */
   private updateAnimals(dt: number): void {
@@ -1796,17 +2201,161 @@ export class Game {
     if (best) this.audio.animal(best.kind, bestD);
   }
 
-  /** Добыча: зверь падает, с него берётся мясо. */
+  /** Зверь упал. Мясо теперь не падает в рюкзак само — за ним нужен нож. */
   private harvest(animal: Animal): void {
-    const meat = ANIMALS[animal.kind].meat;
-    const left = addItem(this.state.inventory, 'meat', meat);
     this.audio.zombieDown();
     this.toasts.push(
-      left > 0
-        ? `${ANIMAL_NAME[animal.kind]} добыт, но мясо не влезло в рюкзак`
-        : `${ANIMAL_NAME[animal.kind]} добыт. Мясо: +${meat}`,
-      left > 0 ? 'bad' : 'normal',
+      this.state.inventory.hasKnife
+        ? `${ANIMAL_NAME[animal.kind]} добыт. Разделай тушу ножом`
+        : `${ANIMAL_NAME[animal.kind]} добыт. Без ножа с него ничего не взять`,
+      this.state.inventory.hasKnife ? 'normal' : 'bad',
     );
+  }
+
+  /** Туша под ногами: с ножом её можно разделать. */
+  private carcassTarget(): Target | null {
+    const carcass = findCarcass(this.animals, this.player);
+    if (!carcass) return null;
+    const inv = this.state.inventory;
+    return {
+      kind: 'carcass',
+      index: carcass.id,
+      hint: inv.hasKnife ? 'E — разделать тушу' : 'Нужен нож — у Томера 120 ₪',
+      distance: Math.hypot(carcass.x - this.player.x, carcass.z - this.player.z),
+      priority: 4,
+    };
+  }
+
+  /** Костёр на поляне: над ним жарят мясо. */
+  private campfireTarget(): Target | null {
+    const fire = campfirePosition();
+    const d = Math.hypot(this.player.x - fire.x, this.player.z - fire.z);
+    if (d > INTERACT.range + 1.2) return null;
+    const dx = fire.x - this.player.x;
+    const dz = fire.z - this.player.z;
+    const len = Math.hypot(dx, dz) || 1;
+    if ((dx / len) * -Math.sin(this.player.yaw) + (dz / len) * -Math.cos(this.player.yaw) < 0.2) return null;
+    const raw = countItem(this.state.inventory, 'meat');
+    return {
+      kind: 'campfire',
+      index: -1,
+      hint: raw > 0 ? `E — пожарить мясо (${raw})` : 'Сырого мяса нет',
+      distance: d,
+      priority: 2,
+    };
+  }
+
+  /** Жарка: мясо шкворчит над углями, потом падает в рюкзак. */
+  private startCooking(): void {
+    const inv = this.state.inventory;
+    if (countItem(inv, 'meat') <= 0) {
+      this.toasts.push('Сырого мяса нет', 'bad');
+      return;
+    }
+    removeItem(inv, 'meat', 1);
+    this.chore = {
+      label: 'Жаришь мясо',
+      time: CRAFT.cookTime,
+      total: CRAFT.cookTime,
+      done: () => {
+        if (addItem(inv, 'meat_cooked', 1) > 0) {
+          this.toasts.push('Жареное мясо некуда положить', 'bad');
+          addItem(inv, 'meat', 1);
+          return;
+        }
+        this.audio.pickup();
+        this.toasts.push('Жареное мясо: +1');
+      },
+    };
+  }
+
+  /** Берег: отсюда набирают мутную воду в пустую бутылку. */
+  private waterSpot(): Target | null {
+    const terrain = this.world.terrain;
+    // Смотрим на пару метров вперёд: до воды нужно дойти, а не тянуться.
+    const reach = 2.2;
+    const x = this.player.x - Math.sin(this.player.yaw) * reach;
+    const z = this.player.z - Math.cos(this.player.yaw) * reach;
+    if (terrain.surface(x, z) !== 'water') return null;
+    if (terrain.depth(x, z) < 0.15) return null;
+    const inv = this.state.inventory;
+    return {
+      kind: 'water',
+      index: -1,
+      hint: countItem(inv, 'bottle_empty') > 0 ? 'E — набрать воды' : 'Нужна пустая бутылка',
+      distance: reach,
+      priority: 1,
+    };
+  }
+
+  /** Разделка: 'мясо и шкура' за пару секунд возни с ножом. */
+  private startButcher(id: number): void {
+    const animal = this.animals.find((a) => a.id === id);
+    if (!animal || animal.state !== 'dead' || animal.butchered) return;
+    if (!this.state.inventory.hasKnife) {
+      this.toasts.push('Нужен разделочный нож', 'bad');
+      return;
+    }
+    this.slot = 7;
+    this.knife.setCutting(true);
+    this.chore = {
+      label: `Разделываешь: ${ANIMAL_NAME[animal.kind]}`,
+      time: CRAFT.butcherTime,
+      total: CRAFT.butcherTime,
+      done: () => this.finishButcher(animal),
+    };
+  }
+
+  private finishButcher(animal: Animal): void {
+    if (animal.butchered) return;
+    animal.butchered = true;
+    const meat = ANIMALS[animal.kind].meat;
+    const hides = CRAFT.hides[animal.kind];
+    const meatLeft = addItem(this.state.inventory, 'meat', meat);
+    const hideLeft = hides > 0 ? addItem(this.state.inventory, 'hide_raw', hides) : 0;
+    const parts: string[] = [];
+    if (meat - meatLeft > 0) parts.push(`мясо +${meat - meatLeft}`);
+    if (hides - hideLeft > 0) parts.push(`шкура +${hides - hideLeft}`);
+    this.audio.pickup();
+    this.toasts.push(
+      parts.length > 0 ? `Разделал: ${parts.join(', ')}` : 'В рюкзаке нет места',
+      parts.length > 0 ? 'normal' : 'bad',
+    );
+  }
+
+  /** Набрать воды: мутную ещё придётся пропустить через фильтр. */
+  private fillBottle(): void {
+    const inv = this.state.inventory;
+    if (countItem(inv, 'bottle_empty') <= 0) {
+      this.toasts.push('Нужна пустая бутылка', 'bad');
+      return;
+    }
+    removeItem(inv, 'bottle_empty', 1);
+    const left = addItem(inv, 'water_dirty', 1);
+    if (left > 0) {
+      addItem(inv, 'bottle_empty', 1);
+      this.toasts.push('В рюкзаке нет места', 'bad');
+      return;
+    }
+    this.audio.pickup();
+    this.toasts.push('Набрал мутной воды. Сырую пить нельзя — нужен фильтр');
+  }
+
+  /** Долгое дело: пока идёт, игрок стоит на месте. */
+  private updateChore(dt: number): void {
+    const chore = this.chore;
+    if (!chore) return;
+    const moved = this.input.axis('KeyS', 'KeyW') !== 0 || this.input.axis('KeyA', 'KeyD') !== 0;
+    if (moved || this.dying) {
+      this.chore = null;
+      this.knife.setCutting(false);
+      return;
+    }
+    chore.time -= dt;
+    if (chore.time > 0) return;
+    this.chore = null;
+    this.knife.setCutting(false);
+    chore.done();
   }
 
   /** Приход, отходняк и накопленная героином боль. */
@@ -1881,16 +2430,35 @@ export class Game {
     this.hud.setBuzz(this.cigarette.warmth, this.cigarette.buzz);
     this.hud.setSlots(
       this.slot,
-      { 1: true, 2: true, 3: inv.hasShotgun, 4: inv.hasRod, 5: inv.hasFlashlight, 6: inv.hasHammer },
+      {
+        1: true,
+        2: true,
+        3: inv.hasShotgun,
+        4: inv.hasRod,
+        5: inv.hasFlashlight,
+        6: inv.hasHammer,
+        7: inv.hasKnife,
+      },
       {
         1: String(countItem(inv, 'cigarettes')),
         3: inv.hasShotgun ? `${this.shotgun.loaded}/${countItem(inv, 'shells')}` : '',
         4: '',
         5: '',
         6: '',
+        7: '',
       },
     );
     this.hud.setHealth(this.player.health / PLAYER.maxHealth, this.hurtFlash, this.dying);
+    this.hud.setSeason(
+      SEASON_NAME[seasonOf(this.clock.day)],
+      temperature(this.clock.day, this.clock.t),
+    );
+    this.hud.setVitals(
+      this.player.hunger / SURVIVAL.max,
+      this.player.thirst / SURVIVAL.max,
+      this.player.warmth / SURVIVAL.max,
+    );
+    this.hud.setQuick(quickLabel(inv.food), quickLabel(inv.drink));
 
     if (this.target?.name && this.target.labelPoint) {
       this.nameplate.show(this.target.name, this.target.labelPoint, this.camera);

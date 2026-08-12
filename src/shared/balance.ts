@@ -99,6 +99,7 @@ export const ECONOMY = {
     shotgun: 900,
     shells5: 60,
     hammer: 280,
+    knife: 120,
     vineSapling: 60,
     bottles5: 30,
   },
@@ -315,7 +316,7 @@ export const ZOMBIE = {
  */
 export const ANIMALS = {
   hare: { count: 26, walk: 1.2, run: 6.4, flee: 15, charge: 0, damage: 0, cooldown: 0, health: 20, meat: 1, roam: 22 },
-  boar: { count: 12, walk: 1.0, run: 5.4, flee: 0, charge: 11, damage: 16, cooldown: 1.6, health: 90, meat: 3, roam: 30 },
+  boar: { count: 12, walk: 1.0, run: 5.4, flee: 0, charge: 10, damage: 12, cooldown: 2, health: 90, meat: 3, roam: 30 },
   cow: { count: 8, walk: 0.7, run: 2.8, flee: 6, charge: 0, damage: 0, cooldown: 0, health: 150, meat: 5, roam: 18 },
   deer: { count: 12, walk: 1.3, run: 7.2, flee: 24, charge: 0, damage: 0, cooldown: 0, health: 60, meat: 3, roam: 40 },
   duck: { count: 16, walk: 0.5, run: 1.8, flee: 9, charge: 0, damage: 0, cooldown: 0, health: 12, meat: 1, roam: 14 },
@@ -323,6 +324,12 @@ export const ANIMALS = {
   simulateRange: 160,
   /** Как часто подаёт голос зверь рядом с игроком. */
   voiceRange: 30,
+  /** Через сколько секунд туша исчезает и зверь возвращается в лес. */
+  respawn: 150,
+  /** Ближе этого к игроку зверь не воскресает — чтобы не появлялся из воздуха. */
+  respawnAway: 70,
+  /** С какого расстояния разделывают тушу. */
+  butcherRange: 2.4,
 } as const;
 
 /** Оружие ближнего боя и дробовик. */
@@ -338,6 +345,68 @@ export const WEAPONS = {
     farDamage: 28,
     spread: 0.28,
   },
+} as const;
+
+/**
+ * Времена года. Год — сорок суток: по десять на сезон. Температура в
+ * градусах, comfort — та, при которой человеку нормально в рубахе.
+ */
+export const SEASONS = {
+  /** Суток на один сезон. */
+  length: 10,
+  temp: { summer: 25, autumn: 9, winter: -13, spring: 12 },
+  /** Насколько холоднее ночью. */
+  nightDrop: 7,
+  comfort: 12,
+  /** Сколько градусов добавляет полный комплект одежды. */
+  insulationDegrees: 26,
+  /** При каком снеге встаёт лёд на озере. */
+  freezeAt: 0.55,
+} as const;
+
+/**
+ * Выживание. Полная шкала голода — на игровые сутки, жажда вдвое быстрее.
+ * На нуле медленно тает здоровье и не бегается.
+ */
+export const SURVIVAL = {
+  max: 100,
+  /** Единиц в секунду. */
+  hungerDrain: 100 / TIME_CYCLE,
+  thirstDrain: 200 / TIME_CYCLE,
+  /** Мороз ест тепло тем быстрее, чем холоднее. */
+  warmthDrain: 100 / (TIME_CYCLE * 0.35),
+  warmthRegen: 14,
+  /** Здоровье, теряемое в секунду на пустой шкале. */
+  starveDamage: 0.35,
+  freezeDamage: 0.55,
+  /** Ниже этого игрок не бегает. */
+  weakAt: 12,
+  /** Сколько восстанавливают еда и питьё. */
+  food: { apple: 12, meat: 8, meat_cooked: 42, fish: 26, grape: 8 },
+  drink: { water_clean: 55, wine: 30 },
+  /** Сырое мясо ещё и подтравливает. */
+  rawMeatDamage: 8,
+  /** У костра и печки греешься. */
+  fireWarmth: 22,
+} as const;
+
+/** Разделка, выделка кожи и одежда. */
+export const CRAFT = {
+  /** Сколько секунд возишься с тушей. */
+  butcherTime: 1.8,
+  /** Шкур с туши по видам. */
+  hides: { hare: 1, boar: 2, cow: 3, deer: 2, duck: 0 },
+  /** Сколько суток шкура сохнет на сушилке. */
+  dryDays: 1,
+  /** Сколько кож уходит на вещь и сколько она греет (доля от полного). */
+  clothes: {
+    coat: { leather: 4, warmth: 0.5 },
+    hat: { leather: 2, warmth: 0.2 },
+    boots: { leather: 3, warmth: 0.3 },
+  },
+  /** Сколько секунд жарится мясо и сколько чистится вода. */
+  cookTime: 5,
+  purifySeconds: 45,
 } as const;
 
 /** Лечение и смерть. */

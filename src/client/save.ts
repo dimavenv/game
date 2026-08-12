@@ -8,7 +8,7 @@ import type { GameState, BoulderState, TreeMutation } from '../shared/state';
 import type { WorldClock } from '../shared/time';
 
 const KEY = 'krugloe-ozero-save';
-const VERSION = 7;
+const VERSION = 8;
 
 interface SaveData {
   version: number;
@@ -29,7 +29,15 @@ interface SaveData {
   lightUpDay: number;
   tributeDay: number;
   blessedUntilDay: number;
-  player: { x: number; z: number; yaw: number; health: number };
+  player: {
+    x: number;
+    z: number;
+    yaw: number;
+    health: number;
+    hunger: number;
+    thirst: number;
+    warmth: number;
+  };
 }
 
 /**
@@ -56,7 +64,15 @@ export function saveGame(state: GameState, clock: WorldClock, player: PlayerStat
     lightUpDay: state.world.lightUpDay,
     tributeDay: state.world.tributeDay,
     blessedUntilDay: state.world.blessedUntilDay,
-    player: { x: player.x, z: player.z, yaw: player.yaw, health: player.health },
+    player: {
+      x: player.x,
+      z: player.z,
+      yaw: player.yaw,
+      health: player.health,
+      hunger: player.hunger,
+      thirst: player.thirst,
+      warmth: player.warmth,
+    },
   };
   try {
     localStorage.setItem(KEY, JSON.stringify(data));
@@ -107,6 +123,9 @@ export function loadGame(state: GameState, clock: WorldClock, player: PlayerStat
   player.z = data.player.z;
   player.yaw = data.player.yaw;
   player.health = data.player.health;
+  player.hunger = data.player.hunger ?? player.hunger;
+  player.thirst = data.player.thirst ?? player.thirst;
+  player.warmth = data.player.warmth ?? player.warmth;
   return true;
 }
 

@@ -1,7 +1,18 @@
 import { countItem, type Inventory } from '../../shared/inventory';
 import { BLUEPRINTS, type BlueprintId } from '../../shared/world/building';
 
-const ORDER: BlueprintId[] = ['palisade', 'gate', 'chest', 'vine', 'press', 'cellar', 'smokehouse', 'pier'];
+const ORDER: BlueprintId[] = [
+  'palisade',
+  'gate',
+  'chest',
+  'vine',
+  'press',
+  'cellar',
+  'dryer',
+  'filter',
+  'smokehouse',
+  'pier',
+];
 
 /** Полоска заготовок внизу экрана: что строим и хватает ли материалов. */
 export class BuildMenu {

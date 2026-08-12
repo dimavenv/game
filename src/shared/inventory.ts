@@ -11,26 +11,51 @@ export interface ItemStack {
   weight?: number;
 }
 
+/** Что надето: греет и не занимает места в сетке. */
+export interface Worn {
+  coat: boolean;
+  hat: boolean;
+  boots: boolean;
+}
+
 export interface Inventory {
   money: number;
   slots: (ItemStack | null)[];
+  /** Быстрые ячейки: из них едят и пьют по клавише, не открывая рюкзак. */
+  food: ItemStack | null;
+  drink: ItemStack | null;
+  worn: Worn;
   hasRod: boolean;
   hasFlashlight: boolean;
   hasGoodAxe: boolean;
   hasShotgun: boolean;
   hasHammer: boolean;
+  hasKnife: boolean;
 }
 
 export function createInventory(money: number): Inventory {
   return {
     money,
     slots: Array.from({ length: BACKPACK_SLOTS }, () => null),
+    food: null,
+    drink: null,
+    worn: { coat: false, hat: false, boots: false },
     hasRod: false,
     hasFlashlight: false,
     hasGoodAxe: false,
     hasShotgun: false,
     hasHammer: false,
+    hasKnife: false,
   };
+}
+
+/** Насколько греет надетое: 0 — рубаха, 1 — полный комплект. */
+export function insulation(inv: Inventory): number {
+  let sum = 0;
+  if (inv.worn.coat) sum += 0.5;
+  if (inv.worn.hat) sum += 0.2;
+  if (inv.worn.boots) sum += 0.3;
+  return sum;
 }
 
 export function stackWeight(stack: ItemStack): number {

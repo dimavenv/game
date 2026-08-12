@@ -27,6 +27,9 @@ export class Hud {
   private readonly vignette = el('vignette');
   private readonly damage = el('damage');
   private readonly underwater = el('underwater');
+  private readonly seasonLabel = el('season');
+  private readonly vitals = new Map<string, HTMLElement>();
+  private readonly quick = new Map<string, HTMLElement>();
   private readonly fade = el('fade');
   private readonly health = el('health');
   private readonly weight = el('weight');
@@ -130,6 +133,45 @@ export class Hud {
   }
 
   /** Тёплая волна и подсевшая по краям картинка сразу после затяжки. */
+  /** Сезон и температура в строке часов. */
+  setSeason(name: string, degrees: number): void {
+    const sign = degrees > 0 ? '+' : '';
+    this.seasonLabel.textContent = `${name} · ${sign}${Math.round(degrees)}°`;
+  }
+
+  /** Три шкалы выживания: доли от 0 до 1. */
+  setVitals(hunger: number, thirst: number, warmth: number): void {
+    if (this.vitals.size === 0) {
+      for (const node of document.querySelectorAll<HTMLElement>('.vital')) {
+        this.vitals.set(node.dataset.k ?? '', node);
+      }
+    }
+    for (const [key, value] of [
+      ['hunger', hunger],
+      ['thirst', thirst],
+      ['warmth', warmth],
+    ] as const) {
+      const node = this.vitals.get(key);
+      if (!node) continue;
+      const bar = node.querySelector('i') as HTMLElement | null;
+      if (bar) bar.style.setProperty('--v', Math.max(0, Math.min(1, value)).toFixed(3));
+      node.classList.toggle('low', value < 0.2);
+    }
+  }
+
+  /** Что лежит в быстрых ячейках. */
+  setQuick(food: string, drink: string): void {
+    if (this.quick.size === 0) {
+      for (const node of document.querySelectorAll<HTMLElement>('.quick')) {
+        this.quick.set(node.dataset.k ?? '', node);
+      }
+    }
+    const foodNode = this.quick.get('food')?.querySelector('span');
+    const drinkNode = this.quick.get('drink')?.querySelector('span');
+    if (foodNode) foodNode.textContent = food;
+    if (drinkNode) drinkNode.textContent = drink;
+  }
+
   /** Погружение: 0 — над водой, 1 — с головой. */
   setUnderwater(amount: number): void {
     this.underwater.style.opacity = amount.toFixed(3);

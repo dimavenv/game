@@ -1,4 +1,4 @@
-import { ANIMALS, WORLD } from './balance';
+import { ANIMALS, WORLD, ZOMBIE } from './balance';
 import type { PlayerState } from './movement';
 import { clamp } from './rng';
 import { Terrain } from './world/terrain';
@@ -44,6 +44,8 @@ export interface Animal {
   /** Пауза между ударами кабана. */
   attackTimer: number;
   deadFor: number;
+  /** Тушу уже разделали ножом: мясо и шкура сняты. */
+  butchered: boolean;
   /** Текущая скорость и фаза шага — по ней рисуется бег. */
   speed: number;
   phase: number;
@@ -53,9 +55,15 @@ function spec(kind: AnimalKind) {
   return ANIMALS[kind];
 }
 
+function distanceToClearing(x: number, z: number): number {
+  return Math.hypot(x - WORLD.clearing.x, z - WORLD.clearing.z);
+}
+
 /** Годится ли точка этому зверю: утки только на воде, остальные только на суше. */
 function suits(kind: AnimalKind, terrain: Terrain, x: number, z: number): boolean {
   if (Math.abs(x) > WORLD.bound - 12 || Math.abs(z) > WORLD.bound - 12) return false;
+  // Поляна — единственное безопасное место в игре. Кабану там делать нечего.
+  if (kind === 'boar' && distanceToClearing(x, z) < ZOMBIE.safeRadius + 6) return false;
   const surface = terrain.surface(x, z);
   if (kind === 'duck') {
     // Утки держатся озера и подальше от берега.
@@ -91,6 +99,7 @@ export function spawnAnimals(rng: () => number, world: WorldData): Animal[] {
         x = (rng() * 2 - 1) * (WORLD.bound - 40);
         z = (rng() * 2 - 1) * (WORLD.bound - 40);
       }
+      if (kind === 'boar' && distanceToClearing(x, z) < ZOMBIE.safeRadius + 25) continue;
       if (!suits(kind, world.terrain, x, z)) continue;
 
       out.push({
@@ -109,6 +118,7 @@ export function spawnAnimals(rng: () => number, world: WorldData): Animal[] {
         health: s.health,
         attackTimer: 0,
         deadFor: 0,
+        butchered: false,
         speed: 0,
         phase: rng() * 10,
       });
@@ -135,6 +145,20 @@ function pickTarget(a: Animal, terrain: Terrain, rng: () => number): void {
   a.targetZ = a.homeZ;
 }
 
+/** Зверь возвращается к жизни у своего дома: популяция не выбивается насухо. */
+function revive(a: Animal, terrain: Terrain, rng: () => number): void {
+  a.x = a.homeX;
+  a.z = a.homeZ;
+  a.y = a.kind === 'duck' ? WORLD.waterLevel : terrain.height(a.x, a.z);
+  a.health = spec(a.kind).health;
+  a.state = 'graze';
+  a.timer = 2 + rng() * 4;
+  a.deadFor = 0;
+  a.butchered = false;
+  a.attackTimer = 0;
+  pickTarget(a, terrain, rng);
+}
+
 export interface AnimalStep {
   /** Урон, который кабаны успели нанести за этот кадр. */
   damage: number;
@@ -154,6 +178,11 @@ export function stepAnimals(
     if (a.state === 'dead') {
       a.deadFor += dt;
       a.speed = 0;
+      // Туша лежит своё, потом лес тихо возвращает зверя — но не на глазах.
+      if (a.deadFor > ANIMALS.respawn) {
+        const away = Math.hypot(a.homeX - player.x, a.homeZ - player.z);
+        if (away > ANIMALS.respawnAway) revive(a, world.terrain, rng);
+      }
       continue;
     }
 
@@ -170,7 +199,14 @@ export function stepAnimals(
     a.timer -= dt;
     a.attackTimer = Math.max(0, a.attackTimer - dt);
 
-    if (s.charge > 0 && toPlayer < s.charge && a.state !== 'charge') {
+    // На поляне у хижины кабан не связывается: там отсиживаются после смерти.
+    const playerSafe = distanceToClearing(player.x, player.z) < ZOMBIE.safeRadius;
+    if (playerSafe && a.state === 'charge') {
+      a.state = 'flee';
+      a.timer = 4;
+    }
+
+    if (!playerSafe && s.charge > 0 && toPlayer < s.charge && a.state !== 'charge') {
       a.state = 'charge';
       a.timer = 6;
     } else if (s.flee > 0 && toPlayer < s.flee && a.state !== 'flee') {
@@ -293,6 +329,26 @@ export function findAnimalTarget(
     const d = Math.hypot(dx, dz);
     if (d > range || d > bestD) continue;
     if ((dx / d) * fx + (dz / d) * fz < 1 - arc) continue;
+    best = a;
+    bestD = d;
+  }
+  return best;
+}
+
+/** Ближайшая неразделанная туша перед игроком — под нож. */
+export function findCarcass(animals: Animal[], player: PlayerState): Animal | null {
+  const fx = -Math.sin(player.yaw);
+  const fz = -Math.cos(player.yaw);
+  let best: Animal | null = null;
+  let bestD = Infinity;
+  for (const a of animals) {
+    if (a.state !== 'dead' || a.butchered) continue;
+    const dx = a.x - player.x;
+    const dz = a.z - player.z;
+    const d = Math.hypot(dx, dz);
+    if (d > ANIMALS.butcherRange || d > bestD) continue;
+    // Смотреть надо примерно на неё: туша лежит низко, конус широкий.
+    if (d > 0.4 && (dx / d) * fx + (dz / d) * fz < 0.1) continue;
     best = a;
     bestD = d;
   }

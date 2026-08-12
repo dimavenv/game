@@ -1,5 +1,14 @@
-import { CARRY_LIMIT, moveStack, stackWeight, totalWeight, type Inventory, type ItemStack } from '../../shared/inventory';
+import { CARRY_LIMIT, addItem, moveStack, stackWeight, totalWeight, type Inventory, type ItemStack } from '../../shared/inventory';
 import { ITEMS, type ItemId } from '../../shared/items';
+
+type Side = 'bag' | 'chest' | 'quick';
+
+/** Что можно надеть — и сколько от этого тепла. */
+const WEARABLE: { id: ItemId; label: string; key: 'coat' | 'hat' | 'boots' }[] = [
+  { id: 'coat', label: 'куртка', key: 'coat' },
+  { id: 'hat', label: 'шапка', key: 'hat' },
+  { id: 'boots', label: 'сапоги', key: 'boots' },
+];
 
 /**
  * Рюкзак: сетка ячеек, вес и перекладывание мышью. Слева — то, что на игроке,
@@ -12,11 +21,16 @@ export class InventoryScreen {
   private readonly rightGrid: HTMLDivElement;
   private readonly rightTitle: HTMLDivElement;
   private readonly weightEl: HTMLDivElement;
+  private readonly quickGrid: HTMLDivElement;
+  private readonly wornGrid: HTMLDivElement;
+  private readonly wornNote: HTMLDivElement;
+  /** Быстрые ячейки живут отдельными полями инвентаря, здесь их вид массивом. */
+  private readonly quick: (ItemStack | null)[] = [null, null];
 
   private inventory: Inventory | null = null;
   private chest: (ItemStack | null)[] | null = null;
   /** Что сейчас «в руке» у курсора: сторона и номер ячейки. */
-  private held: { side: 'bag' | 'chest'; index: number } | null = null;
+  private held: { side: Side; index: number } | null = null;
   private closeHandler: (() => void) | null = null;
   private useHandler: ((id: ItemId) => void) | null = null;
 
@@ -30,13 +44,25 @@ export class InventoryScreen {
           <div class="inv-title">Рюкзак</div>
           <div class="inv-grid" data-side="bag"></div>
           <div class="inv-weight"></div>
+          <div class="inv-row">
+            <div class="inv-quick">
+              <div class="inv-title">Быстрые ячейки</div>
+              <div class="inv-grid inv-grid-quick" data-side="quick"></div>
+              <div class="inv-note">F — поесть · G — попить</div>
+            </div>
+            <div class="inv-worn">
+              <div class="inv-title">На себе</div>
+              <div class="inv-grid inv-grid-worn"></div>
+              <div class="inv-note"></div>
+            </div>
+          </div>
         </div>
         <div class="inv-side inv-chest hidden">
           <div class="inv-title">Сундук</div>
           <div class="inv-grid" data-side="chest"></div>
         </div>
       </div>
-      <div class="inv-help">Клик — взять стопку, клик по ячейке — положить. Правая кнопка — использовать. Tab или Esc — закрыть.</div>`;
+      <div class="inv-help">Клик — взять стопку, клик по ячейке — положить. Правая кнопка — использовать или надеть. Tab или Esc — закрыть.</div>`;
     document.body.appendChild(this.root);
 
     this.leftGrid = this.root.querySelector('.inv-grid[data-side="bag"]')!;
@@ -44,6 +70,9 @@ export class InventoryScreen {
     this.rightGrid = this.root.querySelector('.inv-grid[data-side="chest"]')!;
     this.rightTitle = this.rightPane.querySelector('.inv-title')!;
     this.weightEl = this.root.querySelector('.inv-weight')!;
+    this.quickGrid = this.root.querySelector('.inv-grid[data-side="quick"]')!;
+    this.wornGrid = this.root.querySelector('.inv-grid-worn')!;
+    this.wornNote = this.root.querySelector('.inv-worn .inv-note')!;
   }
 
   get isOpen(): boolean {
@@ -76,12 +105,27 @@ export class InventoryScreen {
     onClose?.();
   }
 
-  private slotsOf(side: 'bag' | 'chest'): (ItemStack | null)[] | null {
-    return side === 'bag' ? (this.inventory?.slots ?? null) : this.chest;
+  private slotsOf(side: Side): (ItemStack | null)[] | null {
+    if (side === 'bag') return this.inventory?.slots ?? null;
+    if (side === 'quick') return this.inventory ? this.quick : null;
+    return this.chest;
+  }
+
+  /** Быстрые ячейки — два отдельных поля; здесь они синхронизируются с массивом. */
+  private pullQuick(): void {
+    if (!this.inventory) return;
+    this.quick[0] = this.inventory.food;
+    this.quick[1] = this.inventory.drink;
+  }
+
+  private pushQuick(): void {
+    if (!this.inventory) return;
+    this.inventory.food = this.quick[0];
+    this.inventory.drink = this.quick[1];
   }
 
   /** Клик по ячейке: взять, положить или переложить между сторонами. */
-  private click(side: 'bag' | 'chest', index: number): void {
+  private click(side: Side, index: number): void {
     const slots = this.slotsOf(side);
     if (!slots) return;
 
@@ -113,10 +157,11 @@ export class InventoryScreen {
     }
 
     this.held = null;
+    this.pushQuick();
     this.render();
   }
 
-  private renderGrid(grid: HTMLElement, side: 'bag' | 'chest', slots: (ItemStack | null)[]): void {
+  private renderGrid(grid: HTMLElement, side: Side, slots: (ItemStack | null)[]): void {
     grid.replaceChildren();
     slots.forEach((stack, index) => {
       const cell = document.createElement('button');
@@ -145,17 +190,53 @@ export class InventoryScreen {
       cell.addEventListener('click', () => this.click(side, index));
       cell.addEventListener('contextmenu', (e) => {
         e.preventDefault();
+        // Быстрые ячейки расходуются клавишами F и G, а не мышью.
         if (side !== 'bag' || !stack) return;
         this.useHandler?.(stack.id);
+        this.pushQuick();
         this.render();
       });
       grid.appendChild(cell);
     });
   }
 
+  /** Три вещи на игроке: клик снимает и кладёт обратно в рюкзак. */
+  private renderWorn(): void {
+    const inv = this.inventory;
+    if (!inv) return;
+    this.wornGrid.replaceChildren();
+    let warm = 0;
+    for (const item of WEARABLE) {
+      const on = inv.worn[item.key];
+      if (on) warm += 1;
+      const cell = document.createElement('button');
+      cell.type = 'button';
+      cell.className = 'inv-cell';
+      cell.title = on ? `${ITEMS[item.id].name} — клик, чтобы снять` : `${item.label} не надета`;
+      if (on) {
+        cell.classList.add('filled');
+        const icon = document.createElement('span');
+        icon.className = 'inv-icon';
+        icon.textContent = ITEMS[item.id].icon;
+        cell.appendChild(icon);
+      }
+      cell.addEventListener('click', () => {
+        if (!inv.worn[item.key]) return;
+        if (addItem(inv, item.id, 1) > 0) return;
+        inv.worn[item.key] = false;
+        this.render();
+      });
+      this.wornGrid.appendChild(cell);
+    }
+    this.wornNote.textContent = warm === WEARABLE.length ? 'Зима не страшна' : `Надето: ${warm}/${WEARABLE.length}`;
+  }
+
   render(): void {
     if (!this.inventory) return;
+    this.pullQuick();
     this.renderGrid(this.leftGrid, 'bag', this.inventory.slots);
+    this.renderGrid(this.quickGrid, 'quick', this.quick);
+    this.renderWorn();
     if (this.chest) this.renderGrid(this.rightGrid, 'chest', this.chest);
 
     const weight = totalWeight(this.inventory);

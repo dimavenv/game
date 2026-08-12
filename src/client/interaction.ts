@@ -27,6 +27,9 @@ export type TargetKind =
   | 'swing'
   | 'pebble'
   | 'vine'
+  | 'carcass'
+  | 'water'
+  | 'campfire'
   | 'structure';
 
 export interface Target {
@@ -211,6 +214,8 @@ export class Interactions {
       if (s.kind === 'chest') hint = 'E — сундук';
       else if (s.kind === 'press') hint = 'E — топтать виноград';
       else if (s.kind === 'cellar') hint = 'E — погреб';
+      else if (s.kind === 'dryer') hint = 'E — сушилка';
+      else if (s.kind === 'filter') hint = 'E — очиститель воды';
       else if (s.kind === 'vine') {
         hint = plantedVineReady(s, day, WINE.saplingGrowDays, WINE.vineRegrowDays)
           ? 'E — срезать грозди'

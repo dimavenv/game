@@ -21,6 +21,14 @@ export type ItemId =
   | 'fish_bighead'
   | 'boot'
   | 'meat'
+  | 'meat_cooked'
+  | 'hide_raw'
+  | 'leather'
+  | 'water_dirty'
+  | 'water_clean'
+  | 'coat'
+  | 'hat'
+  | 'boots'
   | 'cocaine'
   | 'hash'
   | 'heroin';
@@ -53,7 +61,15 @@ export const ITEMS: Record<ItemId, ItemSpec> = {
   fish_crucian: { name: 'карась', weight: 0.6, stack: 1, sell: 18, icon: '🐟' },
   fish_perch: { name: 'окунь', weight: 0.8, stack: 1, sell: 35, icon: '🐟' },
   fish_bighead: { name: 'толстолобик', weight: 3, stack: 1, sell: 85, icon: '🐠' },
-  meat: { name: 'мясо', weight: 1.4, stack: 10, sell: 40, icon: '🥩' },
+  meat: { name: 'сырое мясо', weight: 1.4, stack: 10, sell: 30, icon: '🥩' },
+  meat_cooked: { name: 'жареное мясо', weight: 1.2, stack: 10, sell: 60, icon: '🍖' },
+  hide_raw: { name: 'сырая шкура', weight: 2.6, stack: 6, sell: 35, icon: '🟫' },
+  leather: { name: 'выделанная кожа', weight: 1.5, stack: 8, sell: 75, icon: '🧶' },
+  water_dirty: { name: 'мутная вода', weight: 1.1, stack: 6, sell: 0, icon: '🥛' },
+  water_clean: { name: 'чистая вода', weight: 1.1, stack: 6, sell: 12, icon: '💧' },
+  coat: { name: 'кожаная куртка', weight: 3.2, stack: 1, sell: 260, icon: '🧥' },
+  hat: { name: 'кожаная шапка', weight: 0.9, stack: 1, sell: 120, icon: '🎩' },
+  boots: { name: 'кожаные сапоги', weight: 2.2, stack: 1, sell: 190, icon: '🥾' },
   boot: { name: 'старый ботинок', weight: 1, stack: 1, sell: 1, icon: '👢' },
   cocaine: { name: 'кокаин', weight: 0.05, stack: 5, sell: 50, icon: '❄️' },
   hash: { name: 'гашиш', weight: 0.05, stack: 5, sell: 30, icon: '🌿' },

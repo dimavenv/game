@@ -126,12 +126,26 @@ const SHOP: ShopEntry[] = [
     buy: (s) => { s.inventory.hasFlashlight = true; },
   },
   { id: 'buy-hammer', label: 'Молот', price: ECONOMY.prices.hammer, owned: (s) => s.inventory.hasHammer, buy: (s) => { s.inventory.hasHammer = true; } },
+  { id: 'buy-knife', label: 'Разделочный нож', price: ECONOMY.prices.knife, owned: (s) => s.inventory.hasKnife, buy: (s) => { s.inventory.hasKnife = true; } },
   { id: 'buy-axe', label: 'Хороший топор', price: ECONOMY.prices.goodAxe, owned: (s) => s.inventory.hasGoodAxe, buy: (s) => { s.inventory.hasGoodAxe = true; } },
   { id: 'buy-shotgun', label: 'Дробовик', price: ECONOMY.prices.shotgun, owned: (s) => s.inventory.hasShotgun, buy: (s) => { s.inventory.hasShotgun = true; } },
 ];
 
 /** Что Томер скупает: ресурсы и улов. */
-const SELLABLE: ItemId[] = ['apple', 'log', 'stone', 'meat', 'grape', 'must', 'wine_young', 'wine_aged', 'wine_vintage'];
+const SELLABLE: ItemId[] = [
+  'apple',
+  'log',
+  'stone',
+  'meat',
+  'meat_cooked',
+  'hide_raw',
+  'leather',
+  'grape',
+  'must',
+  'wine_young',
+  'wine_aged',
+  'wine_vintage',
+];
 
 /** Цена стопки с учётом веса рыбы. */
 function stackValue(id: ItemId, count: number, weight?: number): number {

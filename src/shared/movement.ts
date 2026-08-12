@@ -1,8 +1,8 @@
-import { PLAYER, WORLD } from './balance';
+import { PLAYER, SURVIVAL, WORLD } from './balance';
 import { clamp } from './rng';
 import { platformAt } from './world/buildings';
 import type { Obstacle } from './world/grid';
-import type { Surface } from './world/terrain';
+import { Terrain, type Surface } from './world/terrain';
 import type { WorldData } from './world/worldgen';
 
 /**
@@ -34,6 +34,10 @@ export interface PlayerState {
   /** Пройденный путь — по нему отмеряются шаги. */
   distance: number;
   health: number;
+  /** Выживание: сытость, питьё и тепло. Всё 0..100. */
+  hunger: number;
+  thirst: number;
+  warmth: number;
 }
 
 export interface MoveInput {
@@ -50,6 +54,8 @@ export interface MoveInput {
   slowFactor: number;
   /** Текущий потолок дыхания с учётом выкуренного за день. */
   breathMax: number;
+  /** Голодный, обезвоженный или замёрзший игрок не бегает. */
+  weak: boolean;
 }
 
 export function createPlayerState(world: WorldData): PlayerState {
@@ -74,6 +80,9 @@ export function createPlayerState(world: WorldData): PlayerState {
     wading: false,
     distance: 0,
     health: PLAYER.maxHealth,
+    hunger: SURVIVAL.max,
+    thirst: SURVIVAL.max,
+    warmth: SURVIVAL.max,
   };
 }
 
@@ -143,7 +152,7 @@ export function stepPlayer(state: PlayerState, input: MoveInput, world: WorldDat
   state.wading = depth > 0.02;
   state.surface = deck === null ? world.terrain.surface(state.x, state.z) : 'grass';
 
-  const wantsSprint = input.sprint && wishLen > 0.1 && !state.wading && !input.overloaded;
+  const wantsSprint = input.sprint && wishLen > 0.1 && !state.wading && !input.overloaded && !input.weak;
   const canSprint = wantsSprint && !state.exhausted && state.breath > 0;
   state.sprinting = canSprint;
 
@@ -206,10 +215,13 @@ export function stepPlayer(state: PlayerState, input: MoveInput, world: WorldDat
   state.speed = Math.hypot(state.vx, state.vz);
 
   // Прыжок и падение.
+  const onIce = world.terrain.frozen && Terrain.lakeDistance(state.x, state.z) < WORLD.lakeHalf;
   const ground =
     deck !== null
       ? deck
-      : Math.max(world.terrain.height(state.x, state.z), WORLD.waterLevel - PLAYER.maxWadeDepth);
+      : onIce
+        ? WORLD.waterLevel
+        : Math.max(world.terrain.height(state.x, state.z), WORLD.waterLevel - PLAYER.maxWadeDepth);
   if (state.onGround) {
     // Небольшое сглаживание, чтобы кочки не дёргали камеру.
     state.feetY += (ground - state.feetY) * Math.min(1, 12 * dt);
