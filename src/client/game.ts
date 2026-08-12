@@ -126,8 +126,10 @@ import { buildAppleTree, buildMonument, ChopEffects, type AppleTreeHandle } from
 import { PLACED_MATERIALS, PRESS_FLOOR, PlacedStructures } from './render/placed';
 import { buildCave } from './render/caves';
 import { Thrushes } from './render/thrushes';
-import { MapScreen, type Landmark } from './ui/map';
+import { buildGorgePhoto } from './render/photo';
+import { MapScreen, type Landmark, type MapFlag } from './ui/map';
 import { insideCave } from '../shared/world/caves';
+import { CORRIDOR, insideGorge, nearestGorgeAxis } from '../shared/world/gorge';
 import { buildVine, buildWildVine, type VineHandle } from './render/vines';
 import { Sky } from './render/sky';
 import { Smoke } from './render/smoke';
@@ -392,6 +394,9 @@ export class Game {
     // Пещеры: по одной склейке на каждую, всё остальное — рельеф и стены.
     for (const cave of this.world.caves) this.scene.add(buildCave(cave));
 
+    // Фотография на стене щели: сам снимок лежит файлом в public/photos.
+    this.scene.add(buildGorgePhoto(terrain));
+
     // Дрозды живут только в ущелье, поэтому их немного и они всегда там.
     this.thrushes = new Thrushes(terrain);
     this.scene.add(this.thrushes.group);
@@ -594,11 +599,15 @@ export class Game {
         game: Game;
         __step: typeof stepPlayer;
         __insideCave: typeof insideCave;
+        __gorgeAxis: typeof nearestGorgeAxis;
+        __corridor: number;
       };
       w.game = this;
-      // Шаг симуляции и проверка «внутри пещеры» — для отладочных прогонов.
+      // Шаг симуляции и геометрия пещер с ущельем — для отладочных прогонов.
       w.__step = stepPlayer;
       w.__insideCave = insideCave;
+      w.__gorgeAxis = nearestGorgeAxis;
+      w.__corridor = CORRIDOR;
     }
 
     // Все обычные материалы сцены получают сезонный оттенок и снег.
@@ -2678,46 +2687,41 @@ export class Game {
       return;
     }
     document.exitPointerLock();
+    const world = this.state.world;
     const landmarks: Landmark[] = [
       { x: this.world.hut.x, z: this.world.hut.z, label: 'Хижина', kind: 'hut' },
       { x: WORLD.sign.x, z: WORLD.sign.z, label: 'Круглое озеро', kind: 'water' },
-      { x: WORLD.monument.x, z: WORLD.monument.z, label: 'Серёга Пират', kind: 'sign' },
       { x: MOUNTAIN.x, z: MOUNTAIN.z, label: 'Гора Петушок', kind: 'peak' },
       { x: SWING.base.x, z: SWING.base.z, label: 'Тарзанка', kind: 'sign' },
       { x: GORGE.sign.x, z: GORGE.sign.z, label: 'Дантово ущелье', kind: 'gorge' },
       { x: RIVER.sign.x, z: RIVER.sign.z, label: 'Псекупс', kind: 'water' },
       { x: BRIDGE.x, z: BRIDGE.z, label: 'Мост', kind: 'bridge' },
       { x: WORLD.catamaran.x, z: WORLD.catamaran.z, label: 'Катамаран', kind: 'water' },
-      ...this.world.caves.map((cave, i) => ({
+    ];
+    // Памятник и пещеры на карте появляются только после того, как их нашли.
+    if (world.monumentFound) {
+      landmarks.push({ x: WORLD.monument.x, z: WORLD.monument.z, label: 'Серёга Пират', kind: 'sign' });
+    }
+    for (const cave of this.world.caves) {
+      if (!world.cavesFound.includes(cave.id)) continue;
+      landmarks.push({
         x: cave.mouth.x,
         z: cave.mouth.z,
-        label: `Пещера ${i + 1}`,
-        kind: 'cave' as const,
-      })),
-    ];
-    this.mapScreen.open(
-      this.world.terrain,
-      landmarks,
-      this.state.world.markers,
-      this.state.inventory.hasHammer,
-      () => this.resumeAfterUi(),
-    );
+        label: `Пещера ${cave.id + 1}`,
+        kind: 'cave',
+      });
+    }
+    // Флажки — это поставленные молотом постройки, ничего отдельного не храним.
+    const flags: MapFlag[] = world.structures
+      .filter((s) => s.kind === 'flag')
+      .map((s) => ({ x: s.x, z: s.z }));
+
+    this.mapScreen.open(this.world.terrain, landmarks, flags, () => this.resumeAfterUi());
   }
 
   /** Внутри ли игрок в щели ущелья: по этому и заводится счёт дроздов. */
   private gorgeInside(): boolean {
-    const path = GORGE.path;
-    for (let i = 0; i < path.length - 1; i++) {
-      const [ax, az] = path[i];
-      const [bx, bz] = path[i + 1];
-      const dx = bx - ax;
-      const dz = bz - az;
-      const denominator = dx * dx + dz * dz || 1;
-      const t = clamp(((this.player.x - ax) * dx + (this.player.z - az) * dz) / denominator, 0, 1);
-      const d = Math.hypot(this.player.x - (ax + dx * t), this.player.z - (az + dz * t));
-      if (d < GORGE.halfWidth + 1.4) return true;
-    }
-    return false;
+    return insideGorge(this.player.x, this.player.z);
   }
 
   /**
@@ -2726,8 +2730,10 @@ export class Game {
    */
   private updateGorge(dt: number): void {
     const inside = this.gorgeInside();
+    // Птицы живут своей жизнью всегда: иначе они прыгают на месте всякий раз,
+    // когда игрок вышел и вернулся.
+    this.thrushes.update(dt, this.clock.day, this.rng);
     if (inside) {
-      this.thrushes.update(dt, this.clock.day, this.rng);
       // Голоса: без них считать птиц по одной картинке скучно.
       this.thrushVoice -= dt;
       if (this.thrushVoice <= 0) {
@@ -2805,9 +2811,22 @@ export class Game {
   private updateCaveLight(dt: number): void {
     let inside = false;
     for (const cave of this.world.caves) {
-      if (insideCave(cave, this.player.x, this.player.z)) {
-        inside = true;
-        break;
+      if (!insideCave(cave, this.player.x, this.player.z)) continue;
+      inside = true;
+      // Зашёл — пещера отметилась на карте.
+      if (!this.state.world.cavesFound.includes(cave.id)) {
+        this.state.world.cavesFound.push(cave.id);
+        this.toasts.push(`Пещера ${cave.id + 1} нанесена на карту`, 'money');
+      }
+      break;
+    }
+
+    // Памятник Серёге тоже надо сперва найти.
+    if (!this.state.world.monumentFound) {
+      const d = Math.hypot(this.player.x - WORLD.monument.x, this.player.z - WORLD.monument.z);
+      if (d < 14) {
+        this.state.world.monumentFound = true;
+        this.toasts.push('Серёга Пират нанесён на карту', 'money');
       }
     }
     // Плавно, иначе на входе свет щёлкает.

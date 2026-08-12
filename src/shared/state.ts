@@ -23,12 +23,6 @@ export interface BoulderState {
   brokenDay: number | null;
 }
 
-/** Метка на карте: молотом ставится, молотом же и снимается. */
-export interface MapMarker {
-  x: number;
-  z: number;
-}
-
 export interface WorldState {
   trees: Map<number, TreeMutation>;
   appleTrees: AppleTreeState[];
@@ -40,8 +34,10 @@ export interface WorldState {
   vines: Map<number, number>;
   /** Всё, что игрок построил молотом. */
   structures: PlacedStructure[];
-  /** Метки, поставленные игроком на карте. */
-  markers: MapMarker[];
+  /** Найденные пещеры: на карте они появляются только после того, как зашёл. */
+  cavesFound: number[];
+  /** Нашёл ли игрок памятник Серёге Пирату. */
+  monumentFound: boolean;
   /** В какие сутки игрок последний раз называл число дроздов. */
   thrushDay: number;
   nextStructureId: number;
@@ -79,7 +75,8 @@ export function createGameState(appleTreeCount: number): GameState {
       pebbles: new Map(),
       vines: new Map(),
       structures: [],
-      markers: [],
+      cavesFound: [],
+      monumentFound: false,
       thrushDay: -99,
       nextStructureId: 1,
       stoveFuel: 0,

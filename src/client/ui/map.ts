@@ -1,5 +1,5 @@
 import { MOUNTAIN, RIVER, WORLD } from '../../shared/balance';
-import type { MapMarker } from '../../shared/state';
+
 import { Terrain } from '../../shared/world/terrain';
 
 /**
@@ -23,6 +23,12 @@ interface Landmark {
   kind: 'hut' | 'peak' | 'water' | 'bridge' | 'sign' | 'cave' | 'gorge';
 }
 
+/** Флажок, поставленный игроком молотом: на карте это красная метка. */
+export interface MapFlag {
+  x: number;
+  z: number;
+}
+
 export class MapScreen {
   private readonly root: HTMLDivElement;
   private readonly canvas: HTMLCanvasElement;
@@ -31,9 +37,8 @@ export class MapScreen {
   /** Отмывка рельефа: считается один раз и потом только копируется. */
   private relief: HTMLCanvasElement | null = null;
 
-  private markers: MapMarker[] = [];
+  private flags: MapFlag[] = [];
   private landmarks: Landmark[] = [];
-  private canEdit = false;
   private closeHandler: (() => void) | null = null;
 
   constructor() {
@@ -52,7 +57,6 @@ export class MapScreen {
     this.context = this.canvas.getContext('2d')!;
     this.hintEl = this.root.querySelector('.map-hint')!;
 
-    this.canvas.addEventListener('click', (e) => this.onClick(e));
     this.canvas.addEventListener('contextmenu', (e) => e.preventDefault());
   }
 
@@ -60,21 +64,13 @@ export class MapScreen {
     return !this.root.classList.contains('hidden');
   }
 
-  open(
-    terrain: Terrain,
-    landmarks: Landmark[],
-    markers: MapMarker[],
-    canEdit: boolean,
-    onClose: () => void,
-  ): void {
+  open(terrain: Terrain, landmarks: Landmark[], flags: MapFlag[], onClose: () => void): void {
     this.landmarks = landmarks;
-    this.markers = markers;
-    this.canEdit = canEdit;
+    this.flags = flags;
     this.closeHandler = onClose;
     if (!this.relief) this.relief = buildRelief(terrain);
-    this.hintEl.textContent = canEdit
-      ? 'Клик — поставить метку, клик по метке — снять. M или Esc — закрыть'
-      : 'Метки ставятся молотом. M или Esc — закрыть';
+    this.hintEl.textContent =
+      'Флажки ставятся молотом на месте. Пещеры и памятник появляются, когда их найдёшь. M или Esc — закрыть';
     this.draw();
     this.root.classList.remove('hidden');
   }
@@ -93,35 +89,7 @@ export class MapScreen {
     return [((x + half) / (half * 2)) * SIZE, ((z + half) / (half * 2)) * SIZE];
   }
 
-  /** Пиксели холста → мир. */
-  private toWorld(px: number, py: number): [number, number] {
-    const half = WORLD.half;
-    return [(px / SIZE) * half * 2 - half, (py / SIZE) * half * 2 - half];
-  }
-
-  private onClick(event: MouseEvent): void {
-    if (!this.canEdit) return;
-    const rect = this.canvas.getBoundingClientRect();
-    const px = ((event.clientX - rect.left) / rect.width) * SIZE;
-    const py = ((event.clientY - rect.top) / rect.height) * SIZE;
-
-    // Клик рядом с меткой — снимаем её.
-    for (let i = 0; i < this.markers.length; i++) {
-      const [mx, my] = this.toScreen(this.markers[i].x, this.markers[i].z);
-      if (Math.hypot(mx - px, my - py) < 12) {
-        this.markers.splice(i, 1);
-        this.draw();
-        return;
-      }
-    }
-
-    const [x, z] = this.toWorld(px, py);
-    if (Math.abs(x) > WORLD.bound || Math.abs(z) > WORLD.bound) return;
-    this.markers.push({ x, z });
-    this.draw();
-  }
-
-  private draw(): void {
+    private draw(): void {
     const ctx = this.context;
     ctx.clearRect(0, 0, SIZE, SIZE);
     if (this.relief) ctx.drawImage(this.relief, 0, 0, SIZE, SIZE);
@@ -153,9 +121,9 @@ export class MapScreen {
       ctx.fillText(landmark.label, x, y + 16);
     }
 
-    // Метки игрока — поверх всего, красным.
-    this.markers.forEach((marker, index) => {
-      const [x, y] = this.toScreen(marker.x, marker.z);
+    // Флажки игрока — поверх всего, красным.
+    this.flags.forEach((flag, index) => {
+      const [x, y] = this.toScreen(flag.x, flag.z);
       ctx.beginPath();
       ctx.moveTo(x, y);
       ctx.lineTo(x, y - 17);

@@ -1,6 +1,7 @@
 import { PLAYER, SURVIVAL, WORLD } from './balance';
 import { clamp } from './rng';
 import { platformAt } from './world/buildings';
+import { clampToGorge, insideGorge } from './world/gorge';
 import type { Obstacle } from './world/grid';
 import { Terrain, type Surface } from './world/terrain';
 import type { WorldData } from './world/worldgen';
@@ -203,6 +204,12 @@ export function stepPlayer(state: PlayerState, input: MoveInput, world: WorldDat
     if (pos) state.vx = 0;
   }
   if (pos) {
+    // Из щели ущелья не выйти боком: того, кто уже внутри, прижимает к стене.
+    if (insideGorge(state.x, state.z)) {
+      const [cx, cz] = clampToGorge(pos[0], pos[1]);
+      pos[0] = cx;
+      pos[1] = cz;
+    }
     const moved = Math.hypot(pos[0] - state.x, pos[1] - state.z);
     state.distance += moved;
     state.x = pos[0];

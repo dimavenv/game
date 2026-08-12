@@ -4,7 +4,6 @@ import {
   bridgePlatform,
   catamaranLayout,
   hutLayout,
-  gorgeWalls,
   mountainObstacles,
   stallLayout,
   type BoxCollider,
@@ -220,9 +219,6 @@ export function generateWorld(seedInput: string | number): WorldData {
     cavePlatformList.push(...cavePlatforms(cave));
     for (const w of caveWalls(cave)) obstacles.add({ x: w.x, z: w.z, radius: w.radius, id: -1 });
   }
-
-  // Стены Дантова ущелья: наверх по ним не влезешь, ход только по дну.
-  for (const o of gorgeWalls()) obstacles.add({ x: o.x, z: o.z, radius: o.radius, id: -1 });
 
   return {
     seed,

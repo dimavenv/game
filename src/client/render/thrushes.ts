@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { GORGE } from '../../shared/balance';
-import { mulberry32 } from '../../shared/rng';
+import { clamp, mulberry32 } from '../../shared/rng';
 import type { Terrain } from '../../shared/world/terrain';
 
 /**
@@ -73,6 +73,8 @@ interface Bird {
   /** Куда сел и куда собрался. */
   from: THREE.Vector3;
   to: THREE.Vector3;
+  /** Где по оси щели сидит: перепархивает только рядом, а не через всё ущелье. */
+  along: number;
   /** 0 — сидит на месте, 1 — долетел. */
   t: number;
   /** Сколько ещё сидеть до следующего перелёта. */
@@ -97,6 +99,8 @@ export class Thrushes {
   private readonly hidden = new THREE.Matrix4().makeScale(0, 0, 0);
   private count = 0;
   private clock = 0;
+  /** На какие сутки расселены птицы: со сменой дня они пересаживаются. */
+  private day = -1;
 
   constructor(private readonly terrain: Terrain) {
     const material = new THREE.MeshStandardMaterial({
@@ -126,45 +130,54 @@ export class Thrushes {
   populate(day: number): void {
     this.birds.length = 0;
     this.count = Thrushes.countFor(day);
+    this.day = day;
     const rng = mulberry32((day * 40503 + 7) >>> 0);
     for (let i = 0; i < this.count; i++) {
-      const spot = this.perch(rng);
+      // Каждой птице своё место по длине щели: они рассаживаются по всей ней.
+      const along = (i + 0.5) / this.count + (rng() - 0.5) * 0.06;
+      const spot = this.perch(along, rng);
       this.birds.push({
         from: spot.clone(),
         to: spot.clone(),
+        along,
         t: 1,
         rest: 1 + rng() * 6,
-        speed: 0.6 + rng() * 0.5,
+        speed: 0.7 + rng() * 0.5,
         yaw: rng() * Math.PI * 2,
         bob: rng() * 10,
       });
     }
   }
 
-  /** Случайный уступ в щели: на дне, на стенах и над головой. */
-  private perch(rng: () => number): THREE.Vector3 {
+  /**
+   * Уступ на заданной доле длины щели. Птицы сидят внутри прохода и не выше
+   * пары метров над дном: иначе они висят в воздухе над стенами.
+   */
+  private perch(along: number, rng: () => number): THREE.Vector3 {
     const path = GORGE.path;
-    const leg = Math.min(path.length - 2, Math.floor(rng() * (path.length - 1)));
-    const t = rng();
+    const legs = path.length - 1;
+    const scaled = clamp(along, 0.02, 0.98) * legs;
+    const leg = Math.min(legs - 1, Math.floor(scaled));
+    const t = scaled - leg;
     const [ax, az] = path[leg];
     const [bx, bz] = path[leg + 1];
-    const x0 = ax + (bx - ax) * t;
-    const z0 = az + (bz - az) * t;
-    // Сдвиг поперёк щели: птицы жмутся к стенам.
-    const side = rng() < 0.5 ? -1 : 1;
-    const across = GORGE.halfWidth * (0.25 + rng() * 0.75) * side;
     const dx = bx - ax;
     const dz = bz - az;
     const len = Math.hypot(dx, dz) || 1;
-    const x = x0 + (-dz / len) * across;
-    const z = z0 + (dx / len) * across;
+    // Сдвиг поперёк: птицы жмутся к стенам, но остаются в проходе.
+    const side = rng() < 0.5 ? -1 : 1;
+    const across = GORGE.halfWidth * (0.3 + rng() * 0.6) * side;
+    const x = ax + dx * t + (-dz / len) * across;
+    const z = az + dz * t + (dx / len) * across;
     const floor = this.terrain.height(x, z);
-    return new THREE.Vector3(x, floor + 0.25 + rng() * 3.4, z);
+    return new THREE.Vector3(x, floor + 0.3 + rng() * 1.9, z);
   }
 
   update(dt: number, day: number, rng: () => number): void {
     this.clock += dt;
-    if (this.birds.length === 0) this.populate(day);
+    // Пересаживаем только на новых сутках: иначе птицы прыгают всякий раз,
+    // когда игрок выходит из щели и заходит обратно.
+    if (this.birds.length === 0 || this.day !== day) this.populate(day);
 
     for (let i = 0; i < MAX_BIRDS; i++) {
       const bird = this.birds[i];
@@ -178,9 +191,10 @@ export class Thrushes {
       if (bird.t >= 1) {
         bird.rest -= dt;
         if (bird.rest <= 0) {
-          // Перепорхнул на соседний уступ.
+          // Перепорхнул на соседний уступ — недалеко, вдоль своего участка.
+          bird.along = clamp(bird.along + (rng() - 0.5) * 0.12, 0.02, 0.98);
           bird.from.copy(bird.to);
-          bird.to.copy(this.perch(rng));
+          bird.to.copy(this.perch(bird.along, rng));
           bird.t = 0;
           bird.yaw = Math.atan2(bird.to.x - bird.from.x, bird.to.z - bird.from.z);
         }
@@ -192,8 +206,8 @@ export class Thrushes {
       const flying = bird.t < 1;
       const k = bird.t * bird.t * (3 - 2 * bird.t);
       this.position.lerpVectors(bird.from, bird.to, k);
-      // Дуга полёта: птица не летит по струне.
-      this.position.y += Math.sin(k * Math.PI) * 0.9 * (flying ? 1 : 0);
+      // Дуга полёта: птица не летит по струне, но и не взмывает над щелью.
+      this.position.y += Math.sin(k * Math.PI) * 0.45 * (flying ? 1 : 0);
       if (!flying) this.position.y += Math.sin(this.clock * 2 + bird.bob) * 0.006;
 
       this.euler.set(flying ? -0.2 : 0.08, bird.yaw, 0, 'YXZ');

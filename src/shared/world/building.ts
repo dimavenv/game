@@ -13,6 +13,7 @@ export type BlueprintId =
   | 'chest'
   | 'pier'
   | 'campfire'
+  | 'flag'
   | 'smokehouse'
   | 'dryer'
   | 'filter'
@@ -117,6 +118,16 @@ export const BLUEPRINTS: Record<BlueprintId, Blueprint> = {
     hw: 0.9,
     hd: 0.9,
     height: 0.5,
+    solid: false,
+  },
+  flag: {
+    name: 'Флажок',
+    hint: 'Отмечает место на карте',
+    logs: 1,
+    stones: 0,
+    hw: 0.3,
+    hd: 0.3,
+    height: 1.7,
     solid: false,
   },
   dryer: {

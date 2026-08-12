@@ -8,7 +8,7 @@ import type { GameState, BoulderState, TreeMutation } from '../shared/state';
 import type { WorldClock } from '../shared/time';
 
 const KEY = 'krugloe-ozero-save';
-const VERSION = 9;
+const VERSION = 10;
 
 interface SaveData {
   version: number;
@@ -23,7 +23,8 @@ interface SaveData {
   boulders: [number, BoulderState][];
   pebbles: [number, number][];
   structures: PlacedStructure[];
-  markers: { x: number; z: number }[];
+  cavesFound: number[];
+  monumentFound: boolean;
   thrushDay: number;
   nextStructureId: number;
   vines: [number, number][];
@@ -60,7 +61,8 @@ export function saveGame(state: GameState, clock: WorldClock, player: PlayerStat
     boulders: [...state.world.boulders.entries()],
     pebbles: [...state.world.pebbles.entries()],
     structures: state.world.structures,
-    markers: state.world.markers,
+    cavesFound: state.world.cavesFound,
+    monumentFound: state.world.monumentFound,
     thrushDay: state.world.thrushDay,
     nextStructureId: state.world.nextStructureId,
     vines: [...state.world.vines.entries()],
@@ -113,7 +115,8 @@ export function loadGame(state: GameState, clock: WorldClock, player: PlayerStat
   state.world.boulders = new Map(data.boulders ?? []);
   state.world.pebbles = new Map(data.pebbles ?? []);
   state.world.structures = data.structures ?? [];
-  state.world.markers = data.markers ?? [];
+  state.world.cavesFound = data.cavesFound ?? [];
+  state.world.monumentFound = data.monumentFound ?? false;
   state.world.thrushDay = data.thrushDay ?? -99;
   state.world.nextStructureId = data.nextStructureId ?? 1;
   state.world.vines = new Map(data.vines ?? []);

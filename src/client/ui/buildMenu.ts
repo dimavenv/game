@@ -2,6 +2,7 @@ import { countItem, type Inventory } from '../../shared/inventory';
 import { BLUEPRINTS, type BlueprintId } from '../../shared/world/building';
 
 const ORDER: BlueprintId[] = [
+  'flag',
   'campfire',
   'palisade',
   'gate',

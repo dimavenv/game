@@ -1,4 +1,4 @@
-import { BRIDGE, GORGE, MOUNTAIN, RIVER, SWING, WORLD } from '../balance';
+import { BRIDGE, MOUNTAIN, RIVER, SWING, WORLD } from '../balance';
 import type { Terrain } from './terrain';
 
 /** Прямоугольное препятствие, выровненное по осям: стена, прилавок, печка. */
@@ -219,37 +219,6 @@ export function bridgePlatform(): Platform {
     yaw: BRIDGE.yaw,
     y: RIVER.level + BRIDGE.rise,
   };
-}
-
-/**
- * Стены Дантова ущелья круглыми препятствиями. Рельеф сам по себе вертикаль
- * не держит: без них по стенкам щели можно просто вышагать наверх.
- */
-export function gorgeWalls(): { x: number; z: number; radius: number }[] {
-  const out: { x: number; z: number; radius: number }[] = [];
-  const step = 1.5;
-  for (let i = 0; i < GORGE.path.length - 1; i++) {
-    const [ax, az] = GORGE.path[i];
-    const [bx, bz] = GORGE.path[i + 1];
-    const dx = bx - ax;
-    const dz = bz - az;
-    const length = Math.hypot(dx, dz) || 1;
-    const nx = -dz / length;
-    const nz = dx / length;
-    const count = Math.max(2, Math.round(length / step));
-    for (let k = 0; k <= count; k++) {
-      const t = k / count;
-      const cx = ax + dx * t;
-      const cz = az + dz * t;
-      const offset = GORGE.halfWidth + 0.75;
-      out.push({ x: cx + nx * offset, z: cz + nz * offset, radius: 0.8 });
-      out.push({ x: cx - nx * offset, z: cz - nz * offset, radius: 0.8 });
-    }
-  }
-  // Глухой конец: дальше хода нет.
-  const [ex, ez] = GORGE.path[GORGE.path.length - 1];
-  out.push({ x: ex, z: ez, radius: 1.6 });
-  return out;
 }
 
 /** Высота настила под точкой или null, если там настила нет. */
