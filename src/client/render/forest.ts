@@ -233,36 +233,93 @@ function birchGeometry(seed: number): THREE.BufferGeometry {
   return merge(parts);
 }
 
+/**
+ * Куст: несколько комков листвы на видимых ветках, снизу — сухая подстилка.
+ * Раньше это были четыре гладких шара, теперь у куста есть каркас и края.
+ */
 function bushGeometry(): THREE.BufferGeometry {
-  return merge([
-    gradient(jitter(blob(0.8, 0, 0, 0.52, 0, 0.72), 0.12), 0x24361c, 0x4a6b33),
-    gradient(jitter(blob(0.6, 0, 0.55, 0.42, 0.28, 0.72), 0.1, 3), 0x24361c, 0x53743a),
-    gradient(jitter(blob(0.5, 0, -0.5, 0.4, -0.34, 0.72), 0.09, 7), 0x1f3018, 0x44602c),
-    gradient(jitter(blob(0.42, 0, 0.15, 0.72, -0.4, 0.72), 0.08, 11), 0x2a3f20, 0x5a7c3f),
-  ]);
+  const parts: THREE.BufferGeometry[] = [];
+
+  // Ветки от комля: их видно между листвой, и куст перестаёт быть облаком.
+  for (let i = 0; i < 5; i++) {
+    const a = i * 1.31;
+    const twig = new THREE.CylinderGeometry(0.012, 0.03, 0.7, 4);
+    twig.rotateZ(0.5 + (i % 3) * 0.12);
+    twig.rotateY(a);
+    twig.translate(0, 0.3, 0);
+    parts.push(tint(twig, 0x4a3a26));
+  }
+
+  const clumps: [number, number, number, number, number, number][] = [
+    [0.72, 0, 0.56, 0, 0x24361c, 0x4d6f34],
+    [0.56, 0.52, 0.46, 0.26, 0x24361c, 0x56783c],
+    [0.48, -0.48, 0.44, -0.32, 0x1f3018, 0x46632e],
+    [0.4, 0.14, 0.78, -0.38, 0x2a3f20, 0x5e8141],
+    [0.34, -0.3, 0.72, 0.36, 0x24361c, 0x527036],
+    [0.28, 0.4, 0.86, 0.1, 0x2a3f20, 0x648745],
+  ];
+  for (const [r, dx, dy, dz, dark, light] of clumps) {
+    parts.push(gradient(jitter(blob(r, 0, dx, dy, dz, 0.74), r * 0.2, dx * 7 + dz * 3), dark, light));
+  }
+
+  // Сухие листья у корней.
+  for (let i = 0; i < 4; i++) {
+    const a = i * 1.9;
+    const litter = new THREE.CircleGeometry(0.22, 5);
+    litter.rotateX(-Math.PI / 2);
+    litter.translate(Math.cos(a) * 0.5, 0.03, Math.sin(a) * 0.5);
+    parts.push(tint(litter, 0x4d4128));
+  }
+  return merge(parts);
 }
 
 /** Камешек под ногами: маленький и заметно светлее валуна. */
 function pebbleGeometry(): THREE.BufferGeometry {
   const parts: THREE.BufferGeometry[] = [];
-  for (const [dx, dz, r] of [
-    [0, 0, 0.16],
-    [0.17, 0.08, 0.11],
-    [-0.13, 0.12, 0.09],
+  for (const [dx, dz, r, seed] of [
+    [0, 0, 0.16, 1],
+    [0.17, 0.08, 0.11, 2],
+    [-0.13, 0.12, 0.09, 3],
   ]) {
     const g = new THREE.DodecahedronGeometry(r, 0);
     g.scale(1, 0.6, 1);
+    g.rotateY(seed * 1.7);
     g.translate(dx, r * 0.5, dz);
-    parts.push(tint(g, 0x9a968c));
+    // Сколы: без них камешек — гладкая бусина.
+    parts.push(gradient(jitter(g, r * 0.16, seed), 0x807c72, 0xa8a49a));
   }
   return merge(parts);
 }
 
+/**
+ * Валун: несколько сросшихся глыб со сколами, снизу вросших в землю, сверху
+ * с моховой шапкой. Один додекаэдр читался как бетонный шар.
+ */
 function rockGeometry(): THREE.BufferGeometry {
-  const g = new THREE.DodecahedronGeometry(0.5, 0);
-  g.scale(1, 0.65, 1.1);
-  g.translate(0, 0.2, 0);
-  return tint(g, 0x77746c);
+  const parts: THREE.BufferGeometry[] = [];
+  const lumps: [number, number, number, number, number][] = [
+    [0.5, 0, 0.2, 0, 1],
+    [0.32, 0.38, 0.12, 0.24, 2],
+    [0.27, -0.34, 0.1, -0.28, 3],
+    [0.21, 0.1, 0.34, -0.3, 4],
+  ];
+  for (const [r, dx, dy, dz, seed] of lumps) {
+    const g = new THREE.DodecahedronGeometry(r, 0);
+    g.scale(1, 0.68, 1.08);
+    g.rotateY(seed * 2.1);
+    g.rotateZ(Math.sin(seed) * 0.16);
+    g.translate(dx, dy, dz);
+    parts.push(gradient(jitter(g, r * 0.13, seed), 0x5f5c56, 0x8b877e));
+  }
+  // Мох на верхних гранях: камень перестаёт быть серым пятном.
+  for (let i = 0; i < 5; i++) {
+    const a = i * 1.4;
+    const moss = new THREE.IcosahedronGeometry(0.13 + (i % 3) * 0.03, 0);
+    moss.scale(1.3, 0.32, 1.3);
+    moss.translate(Math.cos(a) * 0.2, 0.35 + Math.sin(i) * 0.04, Math.sin(a) * 0.22);
+    parts.push(gradient(jitter(moss, 0.03, i), 0x3c5228, 0x6c8a3e));
+  }
+  return merge(parts);
 }
 
 const SWAY_CHUNK = /* glsl */ `

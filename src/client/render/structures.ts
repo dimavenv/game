@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { buildFire } from './fire';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import type { HutLayout, StallLayout, WallSpec } from '../../shared/world/buildings';
 
@@ -124,13 +125,44 @@ function gable(x: number, y: number, z: number, halfWidth: number, height: numbe
   return tint(geo, hex);
 }
 
+/**
+ * Кирпичная кладка печки: ряды со сдвигом и разнобоем по тону. Один ящик
+ * читается как крашеный короб, а полсотни кирпичей — как печь.
+ */
+function stoveBricks(cx: number, y: number, cz: number): THREE.BufferGeometry[] {
+  const out: THREE.BufferGeometry[] = [];
+  const rows = 9;
+  const rowHeight = 1.35 / rows;
+  const half = 0.55;
+  for (let row = 0; row < rows; row++) {
+    const shift = row % 2 === 0 ? 0 : 0.13;
+    for (let side = 0; side < 4; side++) {
+      const along = side % 2 === 0 ? 'x' : 'z';
+      const sign = side < 2 ? 1 : -1;
+      for (let i = 0; i < 4; i++) {
+        const t = -half + 0.14 + i * 0.27 + shift;
+        if (Math.abs(t) > half) continue;
+        const shade = 0x6b4034 + (((row * 7 + i * 3 + side) % 5) - 2) * 0x040302;
+        const px = along === 'x' ? cx + t : cx + sign * half;
+        const pz = along === 'x' ? cz + sign * half : cz + t;
+        const w = along === 'x' ? 0.25 : 0.1;
+        const d = along === 'x' ? 0.1 : 0.25;
+        out.push(box(w, rowHeight * 0.86, d, shade, px, y + rowHeight * (row + 0.5), pz));
+      }
+    }
+  }
+  // Ядро под кладкой, чтобы сквозь швы не было видно насквозь.
+  out.push(box(1.02, 1.35, 1.02, 0x4e2f27, cx, y + 0.68, cz));
+  return out;
+}
+
 const WOOD_MATERIAL = () =>
   new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: true, roughness: 0.95, metalness: 0 });
 
 export interface HutBuild {
   group: THREE.Group;
   /** Огонь в печке: свет и языки пламени включаются, когда есть дрова. */
-  setFire(intensity: number): void;
+  setFire(intensity: number, dt: number): void;
   /** Дневной свет из проёма — чтобы внутри что-то было видно. */
   setDaylight(intensity: number): void;
   /** Мировая точка, куда садится игрок во втором кресле. */
@@ -182,9 +214,13 @@ export function buildHut(hut: HutLayout): HutBuild {
     ),
   );
 
-  // Печка: кирпичный короб и труба сквозь крышу.
-  parts.push(box(1.1, 1.35, 1.1, 0x6b4034, hut.stove.x, y + 0.68, hut.stove.z));
-  parts.push(box(0.4, 2.6, 0.4, 0x5c3a30, hut.stove.x, y + 2.2, hut.stove.z));
+  // Печка: кирпичная кладка вразбежку, устье с заслонкой и труба сквозь крышу.
+  parts.push(...stoveBricks(hut.stove.x, y, hut.stove.z));
+  parts.push(box(0.44, 2.6, 0.44, 0x5c3a30, hut.stove.x, y + 2.2, hut.stove.z));
+  parts.push(box(0.5, 0.1, 0.5, 0x4a3028, hut.stove.x, y + 3.4, hut.stove.z));
+  // Устье: тёмный проём и чугунная плита сверху.
+  parts.push(box(0.52, 0.42, 0.08, 0x1a1512, hut.stove.x - 0.56, y + 0.5, hut.stove.z));
+  parts.push(box(1.16, 0.06, 1.16, 0x3d3a36, hut.stove.x, y + 1.39, hut.stove.z));
 
   // Кресла.
   for (const chair of hut.chairs) {
@@ -205,13 +241,11 @@ export function buildHut(hut: HutLayout): HutBuild {
   mesh.receiveShadow = true;
   group.add(mesh);
 
-  // Пламя в топке.
-  const fire = new THREE.Mesh(
-    new THREE.ConeGeometry(0.22, 0.4, 6),
-    new THREE.MeshBasicMaterial({ color: 0xff8a2a, transparent: true, opacity: 0.9 }),
-  );
-  fire.position.set(hut.stove.x - 0.5, y + 0.42, hut.stove.z);
-  group.add(fire);
+  // Пламя в топке: тот же огонь, что и в костре, только вполовину меньше.
+  // Огонь сидит вглубь устья: снаружи видно свет и языки, а не свечку.
+  const fire = buildFire(0.38, false);
+  fire.group.position.set(hut.stove.x - 0.42, y + 0.3, hut.stove.z);
+  group.add(fire.group);
 
   const light = new THREE.PointLight(0xff7a28, 0, 9, 2);
   light.position.set(hut.stove.x - 0.6, y + 0.9, hut.stove.z);
@@ -245,12 +279,12 @@ export function buildHut(hut: HutLayout): HutBuild {
     setDaylight(intensity: number) {
       daylight.intensity = intensity * 3.5;
     },
-    setFire(intensity: number) {
-      phase += 0.1;
+    setFire(intensity: number, dt: number) {
+      phase += dt;
       const flicker = 1 + Math.sin(phase * 3.1) * 0.12 + Math.sin(phase * 7.7) * 0.06;
       light.intensity = intensity * 4.5 * flicker;
-      fire.visible = intensity > 0.02;
-      fire.scale.setScalar(0.7 + intensity * 0.5 * flicker);
+      fire.set(intensity);
+      fire.update(dt);
     },
   };
 }
@@ -332,31 +366,52 @@ export interface CampfireBuild {
 export function buildCampfire(x: number, y: number, z: number): CampfireBuild {
   const group = new THREE.Group();
   const parts: THREE.BufferGeometry[] = [];
-  for (let i = 0; i < 7; i++) {
-    const a = (i / 7) * Math.PI * 2;
-    const stone = new THREE.DodecahedronGeometry(0.22, 0);
-    stone.scale(1, 0.6, 1);
-    stone.translate(x + Math.cos(a) * 0.75, y + 0.08, z + Math.sin(a) * 0.75);
-    parts.push(tint(stone, 0x746f66));
+
+  // Обкладка: камни разного размера и наклона, а не ровное кольцо.
+  for (let i = 0; i < 9; i++) {
+    const a = (i / 9) * Math.PI * 2 + Math.sin(i * 3.1) * 0.12;
+    const size = 0.17 + ((i * 7) % 5) * 0.026;
+    const stone = new THREE.DodecahedronGeometry(size, 0);
+    stone.scale(1, 0.55 + ((i * 3) % 4) * 0.08, 1);
+    stone.rotateY(i * 1.3);
+    stone.rotateX(Math.sin(i) * 0.2);
+    const r = 0.72 + ((i * 5) % 3) * 0.05;
+    stone.translate(x + Math.cos(a) * r, y + 0.06, z + Math.sin(a) * r);
+    // Копоть с внутренней стороны камней.
+    parts.push(tint(stone, i % 3 === 0 ? 0x5d5850 : 0x7a746a));
   }
-  for (let i = 0; i < 4; i++) {
-    const log = new THREE.CylinderGeometry(0.075, 0.09, 1.0, 6);
-    log.rotateZ(Math.PI / 2 - 0.25);
-    log.rotateY((i / 4) * Math.PI);
-    log.translate(x, y + 0.16, z);
-    parts.push(tint(log, 0x4a3626));
+
+  // Зола под костром: светлое пятно, из которого растёт огонь.
+  const ash = new THREE.CircleGeometry(0.62, 12);
+  ash.rotateX(-Math.PI / 2);
+  ash.translate(x, y + 0.015, z);
+  parts.push(tint(ash, 0x4a453e));
+
+  // Брёвна шалашом: наружный конец древесный, внутренний обугленный.
+  for (let i = 0; i < 5; i++) {
+    const log = new THREE.CylinderGeometry(0.07, 0.085, 0.95, 6);
+    log.rotateZ(Math.PI / 2 - 0.42);
+    log.rotateY((i / 5) * Math.PI * 2);
+    log.translate(x, y + 0.2, z);
+    parts.push(charred(log, x, z));
   }
+  // Пара догорающих поленьев поперёк.
+  for (let i = 0; i < 2; i++) {
+    const log = new THREE.CylinderGeometry(0.055, 0.06, 0.7, 6);
+    log.rotateZ(Math.PI / 2);
+    log.rotateY(i * 1.1 + 0.4);
+    log.translate(x, y + 0.07, z);
+    parts.push(charred(log, x, z));
+  }
+
   const mesh = new THREE.Mesh(merge(parts), WOOD_MATERIAL());
   mesh.castShadow = true;
   mesh.receiveShadow = true;
   group.add(mesh);
 
-  const flame = new THREE.Mesh(
-    new THREE.ConeGeometry(0.32, 0.75, 7),
-    new THREE.MeshBasicMaterial({ color: 0xff8a2a, transparent: true, opacity: 0.85 }),
-  );
-  flame.position.set(x, y + 0.45, z);
-  group.add(flame);
+  const fire = buildFire(1);
+  fire.group.position.set(x, y + 0.14, z);
+  group.add(fire.group);
 
   const light = new THREE.PointLight(0xff8a30, 0, 16, 2);
   light.position.set(x, y + 0.7, z);
@@ -371,8 +426,30 @@ export function buildCampfire(x: number, y: number, z: number): CampfireBuild {
       // Днём костёр тлеет и почти не светит, ночью — главный ориентир на поляне.
       const target = night ? 6.5 : 1.2;
       light.intensity += (target * flicker - light.intensity) * Math.min(1, dt * 5);
-      flame.scale.set(flicker, 0.85 + flicker * 0.25, flicker);
-      flame.visible = true;
+      fire.set(night ? 1 : 0.55);
+      fire.update(dt);
     },
   };
+}
+
+/**
+ * Красит полено от древесного к чёрному: чем ближе к середине костра, тем
+ * сильнее обгорело. Из-за этого дрова выглядят горевшими, а не сложенными.
+ */
+function charred(geo: THREE.BufferGeometry, cx: number, cz: number): THREE.BufferGeometry {
+  const flat = geo.index ? geo.toNonIndexed() : geo;
+  const pos = flat.attributes.position as THREE.BufferAttribute;
+  const arr = new Float32Array(pos.count * 3);
+  const wood = new THREE.Color(0x5a412c);
+  const coal = new THREE.Color(0x241d18);
+  const c = new THREE.Color();
+  for (let i = 0; i < pos.count; i++) {
+    const d = Math.hypot(pos.getX(i) - cx, pos.getZ(i) - cz);
+    c.copy(wood).lerp(coal, Math.max(0, 1 - d / 0.42));
+    arr[i * 3] = c.r;
+    arr[i * 3 + 1] = c.g;
+    arr[i * 3 + 2] = c.b;
+  }
+  flat.setAttribute('color', new THREE.BufferAttribute(arr, 3));
+  return flat;
 }

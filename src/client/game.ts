@@ -250,7 +250,6 @@ export class Game {
   private readonly rockPoints: THREE.Vector3[] = [];
   private readonly wildVines: VineHandle[] = [];
   private readonly plantedVines = new Map<number, VineHandle>();
-  private pressing = 0;
   private readonly zombieView = new ZombieView(40);
   private zombies: Zombie[] = [];
   private nextZombieId = 0;
@@ -1179,7 +1178,6 @@ export class Game {
     this.placed.sync(this.state.world.structures, this.clock.day);
     this.syncVines();
     this.updateGhost();
-    if (this.pressing > 0) this.pressing = Math.max(0, this.pressing - dt);
     this.chopEffects.update(dt);
     this.npcs.buravchik.update(dt);
     this.npcs.tomer.update(dt);
@@ -1209,7 +1207,7 @@ export class Game {
     this.post?.setStrength(this.quality.bloom * (night ? 1.5 : 1));
     this.campfire.update(dt, night);
     this.stall.setLamp(night);
-    this.hut.setFire(this.state.world.stoveFuel > 0 ? 1 : 0);
+    this.hut.setFire(this.state.world.stoveFuel > 0 ? 1 : 0, dt);
     this.hut.setDaylight(Math.min(this.sky.sun.intensity, 2.2) / 2.2);
 
     // Яблоки возвращаются на ветки на следующий день.
