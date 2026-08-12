@@ -1,4 +1,4 @@
-import { MOUNTAIN, RIVER, WORLD } from '../balance';
+import { MOUNTAIN, RIVER, SWING, WORLD } from '../balance';
 import { ValueNoise, clamp, lerp, smoothstep, toSeed } from '../rng';
 
 /**
@@ -7,13 +7,16 @@ import { ValueNoise, clamp, lerp, smoothstep, toSeed } from '../rng';
  * им незачем.
  */
 export const RIVER_PATH: [number, number][] = [
-  [-396, 30],
-  [-300, 62],
-  [-232, 96],
-  [-176, 132],
-  [-146, 178],
-  [-134, 246],
-  [-152, 330],
+  [-396, 40],
+  [-300, 74],
+  [-232, 100],
+  [-180, 116],
+  [-148, 126],
+  // Здесь русло вплотную подходит к горе: отсюда и прыгают.
+  [-131.8, 131.8],
+  [-118, 160],
+  [-116, 212],
+  [-130, 292],
   [-140, 396],
 ];
 
@@ -59,6 +62,14 @@ export class Terrain {
       if (d < best) best = d;
     }
     return best;
+  }
+
+  /** Площадка тарзанки: ровная полка, вырубленная в склоне над рекой. */
+  private shelf(h: number, x: number, z: number): number {
+    const d = Math.hypot(x - SWING.base.x, z - SWING.base.z);
+    if (d > SWING.radius * 1.9) return h;
+    const flat = 1 - smoothstep(SWING.radius, SWING.radius * 1.9, d);
+    return lerp(h, RIVER.level + SWING.height, flat);
   }
 
   /** Гора Петушок: пологая юбка, крутые бока, плоская макушка под беседку. */
@@ -110,6 +121,8 @@ export class Terrain {
 
     // Гора: к самой кромке озера сходит на нет, чтобы пляж остался пляжем.
     h += this.mountain(x, z) * smoothstep(WORLD.lakeHalf, WORLD.lakeHalf + 8, d);
+    // Полка под тарзанку врезается в склон, русло режется поверх всего.
+    h = this.shelf(h, x, z);
     h = this.river(h, x, z);
 
     // Поляна под хижину — ровная площадка.
@@ -120,6 +133,26 @@ export class Terrain {
       h = lerp(h, 0.95, flat);
     }
     return h;
+  }
+
+  /** Единичный вектор течения ближайшего отрезка русла. */
+  static riverFlowAt(x: number, z: number): [number, number] {
+    let best = Infinity;
+    let flow: [number, number] = [0, 1];
+    for (let i = 0; i < RIVER_PATH.length - 1; i++) {
+      const [ax, az] = RIVER_PATH[i];
+      const [bx, bz] = RIVER_PATH[i + 1];
+      const dx = bx - ax;
+      const dz = bz - az;
+      const len = Math.hypot(dx, dz);
+      const t = clamp(((x - ax) * dx + (z - az) * dz) / (dx * dx + dz * dz), 0, 1);
+      const d = Math.hypot(x - (ax + dx * t), z - (az + dz * t));
+      if (d < best) {
+        best = d;
+        flow = [dx / len, dz / len];
+      }
+    }
+    return flow;
   }
 
   /** Уровень воды в точке: озеро, река или суша. */

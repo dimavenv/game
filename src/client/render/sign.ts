@@ -60,10 +60,11 @@ export function buildSign(
   const group = new THREE.Group();
   const wood = new THREE.MeshStandardMaterial({ color: 0x6b5236, roughness: 1 });
 
-  const postGeo = new THREE.CylinderGeometry(0.06, 0.07, 1.75, 6);
+  // Столбы стоят ЗА доской: вровень с ней они лезли поверх букв.
+  const postGeo = new THREE.CylinderGeometry(0.06, 0.07, 1.9, 6);
   for (const dx of [-0.88, 0.88]) {
     const post = new THREE.Mesh(postGeo, wood);
-    post.position.set(dx, 0.875, 0);
+    post.position.set(dx, 0.95, -0.11);
     post.castShadow = true;
     post.receiveShadow = true;
     group.add(post);

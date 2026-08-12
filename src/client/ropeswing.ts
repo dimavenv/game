@@ -1,6 +1,7 @@
 import * as THREE from 'three';
-import { SWING, WORLD } from '../shared/balance';
+import { MOUNTAIN, RIVER, SWING } from '../shared/balance';
 import { clamp } from '../shared/rng';
+import { Terrain } from '../shared/world/terrain';
 import type { GameAudio } from './audio/audio';
 import type { Smoke } from './render/smoke';
 import type { SwingBuild } from './render/mountain';
@@ -12,7 +13,7 @@ import type { SwingBuild } from './render/mountain';
  * параболе, погружение с торможением.
  */
 
-export type SwingPhase = 'off' | 'grab' | 'swing' | 'fly' | 'splash' | 'surface' | 'swim';
+export type SwingPhase = 'off' | 'grab' | 'swing' | 'fly' | 'splash' | 'surface' | 'drift' | 'swim';
 
 /**
  * Откуда начинается размах и где отпускают перекладину. В покое трос висит
@@ -20,10 +21,12 @@ export type SwingPhase = 'off' | 'grab' | 'swing' | 'fly' | 'splash' | 'surface'
  */
 const START_ANGLE = -0.25;
 const RELEASE_ANGLE = 1.08;
-/** Скорость отрыва: подобрана так, чтобы улетать на глубину, а не на песок. */
-const LAUNCH_SPEED = 6.6;
+/** Скорость отрыва: подобрана так, чтобы с площадки попадать в русло. */
+const LAUNCH_SPEED = 4.8;
 const LAUNCH_LIFT = 2.6;
 const GRAVITY = 9.8;
+/** Уровень воды в реке — в неё и прыгают. */
+const WATER = RIVER.level;
 
 export class RopeSwing {
   phase: SwingPhase = 'off';
@@ -44,6 +47,11 @@ export class RopeSwing {
   private readonly tmp = new THREE.Vector3();
   private bubbleTimer = 0;
   private windLevel = 0;
+  /** Свободный трос после отрыва: обычный маятник с затуханием. */
+  private freeAngle = 0;
+  private freeSpeed = 0;
+  private freeRope = false;
+  private readonly flow: [number, number] = [0, 1];
 
   constructor(
     private readonly rig: SwingBuild,
@@ -66,6 +74,8 @@ export class RopeSwing {
       case 'splash':
       case 'surface':
         return 'Бульк';
+      case 'drift':
+        return 'Несёт течением';
       case 'swim':
         return 'Выплываешь';
       default:
@@ -81,6 +91,7 @@ export class RopeSwing {
   start(): void {
     if (this.phase !== 'off') return;
     this.phase = 'grab';
+    this.freeRope = false;
     this.timer = 0;
     this.angle = START_ANGLE;
     this.windLevel = 0;
@@ -96,8 +107,12 @@ export class RopeSwing {
     this.audio.pickup();
   }
 
-  /** Вернулся ли игрок в игру: тогда его ставят на берег. */
+  /**
+   * Ведёт номер. Вызывается каждый кадр, даже когда номер окончен: брошенный
+   * трос ещё качается сам по себе, пока не остановится.
+   */
   update(dt: number, out: THREE.Vector3): boolean {
+    this.swingRope(dt);
     if (this.phase === 'off') return false;
     this.timer += dt;
 
@@ -116,6 +131,9 @@ export class RopeSwing {
         break;
       case 'surface':
         this.stepSurface();
+        break;
+      case 'drift':
+        this.stepDrift(dt);
         break;
       case 'swim':
         if (this.stepSwim()) {
@@ -176,6 +194,10 @@ export class RopeSwing {
         LAUNCH_LIFT,
         this.rig.direction.z * LAUNCH_SPEED,
       );
+      // Брошенная перекладина уходит в свободный мах.
+      this.freeRope = true;
+      this.freeAngle = RELEASE_ANGLE;
+      this.freeSpeed = 0;
       this.audio.whoosh();
     }
   }
@@ -194,7 +216,7 @@ export class RopeSwing {
     this.fov = 7 + t * 6;
     this.windLevel = 0.75 + t * 0.25;
 
-    if (this.position.y <= WORLD.waterLevel + 0.15) {
+    if (this.position.y <= WATER + 0.15) {
       this.phase = 'splash';
       this.timer = 0;
       this.windLevel = 0;
@@ -211,9 +233,9 @@ export class RopeSwing {
     this.velocity.x *= 0.9;
     this.velocity.z *= 0.9;
     this.position.addScaledVector(this.velocity, dt);
-    this.position.y = Math.max(this.position.y, WORLD.waterLevel - 1.7);
+    this.position.y = Math.max(this.position.y, WATER - 1.9);
 
-    this.underwater = clamp((WORLD.waterLevel - this.position.y) * 1.6, 0, 1);
+    this.underwater = clamp((WATER - this.position.y) * 1.6, 0, 1);
     this.pitch = -0.55 + clamp(this.timer / SWING.splashTime, 0, 1) * 0.8;
     this.roll *= 0.9;
     this.fov = 12 - this.timer * 4;
@@ -225,20 +247,52 @@ export class RopeSwing {
     }
   }
 
-  /** Выныривание: голова над водой, вдох. */
+  /** Выныривание: голова над водой, вдох, и сразу подхватывает течение. */
   private stepSurface(): void {
     const t = clamp(this.timer / 0.9, 0, 1);
-    this.position.y = THREE.MathUtils.lerp(this.position.y, WORLD.waterLevel + 0.32, t * 0.35);
+    this.position.y = THREE.MathUtils.lerp(this.position.y, WATER + 0.32, t * 0.35);
     this.underwater = (1 - t) * 0.8;
     this.pitch = 0.25 - t * 0.2;
     this.fov = 6 * (1 - t);
     if (t >= 1) {
-      this.phase = 'swim';
+      this.phase = 'drift';
       this.timer = 0;
       this.audio.breath(true);
-      // Берег — по направлению от центра озера через точку падения.
-      const scale = (WORLD.lakeHalf + 1.4) / Math.max(Math.abs(this.position.x), Math.abs(this.position.z));
-      this.exit.set(this.position.x * scale, 0, this.position.z * scale);
+      const f = Terrain.riverFlowAt(this.position.x, this.position.z);
+      this.flow[0] = f[0];
+      this.flow[1] = f[1];
+      this.yaw = Math.atan2(-this.flow[0], -this.flow[1]);
+    }
+  }
+
+  /** Несёт течением: смотришь вперёд по реке, берега уезжают назад. */
+  private stepDrift(dt: number): void {
+    const t = clamp(this.timer / SWING.driftTime, 0, 1);
+    // Течение подхватывает не сразу и отпускает к концу сноса.
+    const speed = SWING.driftSpeed * Math.sin(Math.min(t * 1.35, 1) * Math.PI * 0.85 + 0.2);
+    const f = Terrain.riverFlowAt(this.position.x, this.position.z);
+    this.flow[0] += (f[0] - this.flow[0]) * Math.min(1, dt * 2);
+    this.flow[1] += (f[1] - this.flow[1]) * Math.min(1, dt * 2);
+    this.position.x += this.flow[0] * speed * dt;
+    this.position.z += this.flow[1] * speed * dt;
+    this.position.y = WATER + 0.3 + Math.sin(this.timer * 5) * 0.06;
+
+    this.yaw = Math.atan2(-this.flow[0], -this.flow[1]) + Math.sin(this.timer * 0.9) * 0.25;
+    this.pitch = 0.04 + Math.sin(this.timer * 5 + 1) * 0.035;
+    this.roll = Math.sin(this.timer * 1.7) * 0.05;
+    this.underwater = 0.12 + Math.max(0, Math.sin(this.timer * 3)) * 0.06;
+    if (this.timer % 0.7 < 0.02) this.audio.splash(0.35);
+
+    if (t >= 1) {
+      this.phase = 'swim';
+      this.timer = 0;
+      // Выбираемся на тот берег, что ближе к горе: оттуда идти обратно наверх.
+      const nx = -this.flow[1];
+      const nz = this.flow[0];
+      const toMountain = (MOUNTAIN.x - this.position.x) * nx + (MOUNTAIN.z - this.position.z) * nz;
+      const side = toMountain >= 0 ? 1 : -1;
+      const reach = RIVER.bank + 2.5;
+      this.exit.set(this.position.x + nx * side * reach, 0, this.position.z + nz * side * reach);
       this.tmp.copy(this.exit).sub(this.position).setY(0).normalize();
       this.yaw = Math.atan2(-this.tmp.x, -this.tmp.z);
     }
@@ -248,18 +302,31 @@ export class RopeSwing {
   private stepSwim(): boolean {
     const t = clamp(this.timer / SWING.swimTime, 0, 1);
     this.position.lerp(this.exit, Math.min(1, t * t * 0.14));
-    this.position.y = WORLD.waterLevel + 0.34 + Math.sin(this.timer * 6) * 0.05;
+    this.position.y = WATER + 0.34 + Math.sin(this.timer * 6) * 0.05;
     this.pitch = 0.05 + Math.sin(this.timer * 6 + 1) * 0.03;
     this.underwater = Math.max(0, 0.25 - t * 0.25);
     if (this.timer % 0.6 < 0.02) this.audio.splash(0.4);
     return t >= 1;
   }
 
+  /** Свободный трос: маятник с затуханием, чтобы не застревал наверху. */
+  private swingRope(dt: number): void {
+    if (!this.freeRope) return;
+    this.freeSpeed -= (GRAVITY / SWING.ropeLength) * Math.sin(this.freeAngle) * dt;
+    this.freeSpeed *= Math.max(0, 1 - 0.85 * dt);
+    this.freeAngle += this.freeSpeed * dt;
+    this.rig.setAngle(this.freeAngle);
+    if (Math.abs(this.freeAngle) < 0.01 && Math.abs(this.freeSpeed) < 0.05) {
+      this.rig.setAngle(0);
+      this.freeRope = false;
+    }
+  }
+
   private splashBurst(): void {
     for (let i = 0; i < 26; i++) {
       const a = Math.random() * Math.PI * 2;
       const r = Math.random() * 0.9;
-      this.tmp.set(this.position.x + Math.cos(a) * r, WORLD.waterLevel + 0.1, this.position.z + Math.sin(a) * r);
+      this.tmp.set(this.position.x + Math.cos(a) * r, WATER + 0.1, this.position.z + Math.sin(a) * r);
       this.smoke.spawn(
         this.tmp,
         new THREE.Vector3(Math.cos(a) * (1.2 + Math.random()), 3.2 + Math.random() * 2.6, Math.sin(a) * (1.2 + Math.random())),

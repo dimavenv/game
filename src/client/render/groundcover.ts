@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { GROUND_COVER, WORLD } from '../../shared/balance';
+import { GROUND_COVER, MOUNTAIN, SWING, WORLD } from '../../shared/balance';
 import { campfirePosition } from '../../shared/world/buildings';
 import { mulberry32 } from '../../shared/rng';
 import type { Terrain } from '../../shared/world/terrain';
@@ -217,6 +217,9 @@ export class GroundCover {
       { x: fire.x, z: fire.z, r: 1.5 },
       { x: WORLD.monument.x, z: WORLD.monument.z, r: 1.6 },
       { x: WORLD.sign.x, z: WORLD.sign.z, r: 1.0 },
+      // Настилы беседки и площадки тарзанки: трава сквозь доски не растёт.
+      { x: MOUNTAIN.x, z: MOUNTAIN.z, r: MOUNTAIN.gazeboRadius + 0.4 },
+      { x: SWING.base.x, z: SWING.base.z, r: 4.6 },
     ];
 
     const cellsAcross = Math.ceil((this.reach * 2) / this.cell) + 2;

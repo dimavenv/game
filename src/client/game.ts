@@ -372,7 +372,7 @@ export class Game {
       vines: this.wildVines.map((v) => v.position),
       avi: null,
     };
-    this.interactions = new Interactions(this.world, this.interactionPoints);
+    this.interactions = new Interactions(this.world, this.interactionPoints, () => this.breathMax());
 
     this.inventoryScreen.setUseHandler((id) => this.consumeItem(id));
 
@@ -1308,14 +1308,25 @@ export class Game {
   /** Тарзанка: дальше камерой рулит номер, игрок стоит на месте. */
   private startSwing(): void {
     if (this.ropeSwing.active) return;
+    // Тарзанка берёт всё дыхание разом и не пускает уставших.
+    const breathMax = this.breathMax();
+    if (this.player.breath < breathMax * 0.97) {
+      this.toasts.push('Дыхание не то. Отдышись и приходи', 'bad');
+      return;
+    }
     this.seat = null;
+    this.player.breath = 0;
+    this.player.exhausted = true;
+    this.player.restTimer = 0;
     this.ropeSwing.start();
     this.toasts.push('Ну поехали');
   }
 
-  /** Ведёт номер и, когда он кончился, ставит игрока на берег. */
+  /**
+   * Ведёт номер и, когда он кончился, ставит игрока на берег. Вызывается и
+   * когда номера нет: брошенный трос ещё качается.
+   */
   private updateSwing(dt: number): void {
-    if (!this.ropeSwing.active) return;
     if (this.ropeSwing.update(dt, this.swingExit)) {
       this.audio.setWind(0);
       this.player.x = this.swingExit.x;

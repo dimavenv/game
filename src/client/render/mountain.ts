@@ -153,8 +153,8 @@ export interface SwingBuild {
 }
 
 /**
- * Тарзанка: наклонённая к воде мачта с растяжками, трос и перекладина.
- * Трос висит на своей группе — её и качаем.
+ * Тарзанка: площадка на склоне над Псекупсом, наклонённая к руслу мачта,
+ * трос с перекладиной. Трос висит на своей группе — её и качаем.
  */
 export function buildSwing(terrain: Terrain): SwingBuild {
   const bx = SWING.base.x;
@@ -163,12 +163,38 @@ export function buildSwing(terrain: Terrain): SwingBuild {
   const group = new THREE.Group();
   const parts: THREE.BufferGeometry[] = [];
 
-  // Наклон мачты — в сторону середины озера.
-  const dir = new THREE.Vector3(-bx, 0, -bz).normalize();
+  // Мачта наклонена к точке, куда прыгают, — к середине русла.
+  const dir = new THREE.Vector3(SWING.aim.x - bx, 0, SWING.aim.z - bz).normalize();
   const lean = 0.38;
   const topX = bx + dir.x * Math.sin(lean) * SWING.mastHeight;
   const topZ = bz + dir.z * Math.sin(lean) * SWING.mastHeight;
   const topY = by + Math.cos(lean) * SWING.mastHeight;
+
+  // Настил площадки: доски поперёк направления прыжка.
+  const deckR = SWING.radius * 0.62;
+  const side = new THREE.Vector3(-dir.z, 0, dir.x);
+  const boards = 9;
+  for (let i = 0; i < boards; i++) {
+    const off = (-1 + (i * 2) / (boards - 1)) * deckR;
+    const half = Math.sqrt(Math.max(deckR * deckR - off * off, 0.05));
+    const plank = new THREE.BoxGeometry((deckR * 1.9) / boards, 0.1, half * 2);
+    plank.rotateY(Math.atan2(dir.x, dir.z));
+    plank.translate(bx + side.x * off + dir.x * 0.6, by + 0.06, bz + side.z * off + dir.z * 0.6);
+    parts.push(tint(plank, i % 2 === 0 ? 0x7c6040 : 0x8a6c46));
+  }
+
+  // Перила по бокам: со стороны реки проём, оттуда и летят.
+  for (const s of [-1, 1]) {
+    for (const along of [-0.55, 0.45]) {
+      const px = bx + side.x * s * deckR + dir.x * (0.6 + along * deckR);
+      const pz = bz + side.z * s * deckR + dir.z * (0.6 + along * deckR);
+      parts.push(box(0.12, 1.05, 0.12, 0x5b452c, px, terrain.height(px, pz) + 0.5, pz));
+    }
+    const rail = new THREE.BoxGeometry(0.09, 0.09, deckR * 1.05);
+    rail.rotateY(Math.atan2(dir.x, dir.z));
+    rail.translate(bx + side.x * s * deckR + dir.x * 0.55, by + 1.0, bz + side.z * s * deckR + dir.z * 0.55);
+    parts.push(tint(rail, 0x6a5134));
+  }
 
   const mast = new THREE.CylinderGeometry(0.16, 0.24, SWING.mastHeight, 8);
   mast.translate(0, SWING.mastHeight / 2, 0);
@@ -182,31 +208,23 @@ export function buildSwing(terrain: Terrain): SwingBuild {
   mast.translate(bx, by, bz);
   parts.push(tint(mast, 0x6a5134));
 
-  // Растяжки назад, чтобы мачта не выглядела воткнутой в песок палкой.
-  for (const side of [-1, 1]) {
-    const ax = bx - dir.x * 3.4 + dir.z * side * 2.6;
-    const az = bz - dir.z * 3.4 - dir.x * side * 2.6;
+  // Растяжки назад, чтобы мачта не выглядела воткнутой в землю палкой.
+  for (const s of [-1, 1]) {
+    const ax = bx - dir.x * 3.2 + side.x * s * 2.4;
+    const az = bz - dir.z * 3.2 + side.z * s * 2.4;
     const ay = terrain.height(ax, az);
     const len = Math.hypot(topX - ax, topY - ay, topZ - az);
     const rope = new THREE.CylinderGeometry(0.035, 0.035, len, 5);
     rope.translate(0, len / 2, 0);
-    const q = new THREE.Quaternion().setFromUnitVectors(
-      new THREE.Vector3(0, 1, 0),
-      new THREE.Vector3(topX - ax, topY - ay, topZ - az).normalize(),
+    rope.applyQuaternion(
+      new THREE.Quaternion().setFromUnitVectors(
+        new THREE.Vector3(0, 1, 0),
+        new THREE.Vector3(topX - ax, topY - ay, topZ - az).normalize(),
+      ),
     );
-    rope.applyQuaternion(q);
     rope.translate(ax, ay, az);
     parts.push(tint(rope, 0x54452f));
     parts.push(box(0.16, 0.5, 0.16, 0x4a3826, ax, ay + 0.2, az));
-  }
-
-  // Обод у основания: песок вытоптан, лежат камни.
-  for (let i = 0; i < 7; i++) {
-    const a = (i / 7) * Math.PI * 2;
-    const stone = new THREE.DodecahedronGeometry(0.26, 0);
-    stone.scale(1, 0.55, 1);
-    stone.translate(bx + Math.cos(a) * 1.1, by + 0.05, bz + Math.sin(a) * 1.1);
-    parts.push(tint(stone, 0x77746c));
   }
 
   const mesh = new THREE.Mesh(merge(parts), WOOD());
@@ -218,7 +236,7 @@ export function buildSwing(terrain: Terrain): SwingBuild {
   const pivot = new THREE.Group();
   pivot.position.set(topX, topY, topZ);
   // Порядок YXZ: сперва наклон вокруг локальной X (размах), потом разворот
-  // в сторону озера. При обратном порядке трос качался бы не туда.
+  // к реке. При обратном порядке трос качался бы не туда.
   pivot.rotation.order = 'YXZ';
   pivot.rotation.y = Math.atan2(-dir.x, -dir.z);
 
@@ -257,7 +275,6 @@ export function buildSwing(terrain: Terrain): SwingBuild {
       );
     },
     setAngle(angle: number) {
-      // Пивот развёрнут так, что наклон вокруг локальной X даёт нужный размах.
       pivot.rotation.x = angle;
     },
   };

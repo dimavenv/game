@@ -69,6 +69,8 @@ export class Interactions {
   constructor(
     private readonly world: WorldData,
     private readonly points: InteractionPoints,
+    /** Текущий потолок дыхания: он гуляет от выкуренного за день. */
+    private readonly breathMax: () => number,
   ) {}
 
   /** Постройка по id — нужна, чтобы открыть сундук. */
@@ -187,7 +189,15 @@ export class Interactions {
 
     const swing = near(this.points.swing, INTERACT.range + 1.2, 0.2);
     if (swing !== null) {
-      consider({ kind: 'swing', index: -1, hint: 'E — схватиться за трос', distance: swing, priority: 2 });
+      // На трос лезут только на полном дыхании — и оно уходит всё.
+      const rested = player.breath >= this.breathMax() * 0.97;
+      consider({
+        kind: 'swing',
+        index: -1,
+        hint: rested ? 'E — схватиться за трос' : 'Сначала отдышись',
+        distance: swing,
+        priority: 2,
+      });
     }
 
     // Постройки, с которыми есть что делать.
