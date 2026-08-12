@@ -7,6 +7,8 @@ import {
   AVI,
   MOUNTAIN,
   RIVER,
+  SWING,
+  BRIDGE,
   STONES,
   WINE,
   FISHING,
@@ -65,6 +67,7 @@ import {
 import { CRAFT, SEASONS, SURVIVAL } from '../shared/balance';
 import {
   SEASON_NAME,
+  SEASON_ORDER,
   autumnAmount,
   chill,
   lakeFrozen,
@@ -94,7 +97,7 @@ import {
   zombieCount,
   type Zombie,
 } from '../shared/zombies';
-import { campfirePosition } from '../shared/world/buildings';
+import { campfirePosition, platformAt } from '../shared/world/buildings';
 import { Terrain } from '../shared/world/terrain';
 import { generateWorld, type WorldData } from '../shared/world/worldgen';
 import { GameAudio } from './audio/audio';
@@ -142,6 +145,7 @@ import { Dialog, type DialogSpec } from './ui/dialog';
 import { InventoryScreen } from './ui/inventory';
 import { Hud } from './ui/hud';
 import { Nameplate, Toasts } from './ui/labels';
+import { CheatMenu, type CheatApi, type FlagKey, type ToolKey } from './ui/cheats';
 
 const FIXED_DT = 1 / 60;
 const MOUSE_SENSITIVITY = 0.0022;
@@ -157,6 +161,15 @@ type Slot = 1 | 2 | 3 | 4 | 5 | 6 | 7;
 function quickLabel(stack: ItemStack | null): string {
   if (!stack) return '—';
   return `${ITEMS[stack.id].icon} ${stack.count}`;
+}
+
+/** Точка телепорта из чит-меню: где встать и куда смотреть. */
+interface CheatSpot {
+  id: string;
+  label: string;
+  x: number;
+  z: number;
+  look?: { x: number; z: number };
 }
 
 /** Долгое действие на месте: разделка, сушка, готовка. */
@@ -255,6 +268,9 @@ export class Game {
   private slot: Slot = 1;
   private seat: SeatSpot | null = null;
   private chore: Chore | null = null;
+  private readonly cheatMenu = new CheatMenu();
+  /** Читы: работают только после пароля в главном меню. */
+  private readonly cheats = { god: false, noNeeds: false, infiniteBreath: false };
   private target: Target | null = null;
   private dying = false;
   private deathTimer = 0;
@@ -455,7 +471,7 @@ export class Game {
       }
       this.running = false;
       // Выход из захвата ради диалога, рюкзака или ожидания клика — не пауза.
-      if (this.dialog.isOpen || this.inventoryScreen.isOpen || this.pendingLock) return;
+      if (this.dialog.isOpen || this.inventoryScreen.isOpen || this.cheatMenu.isOpen || this.pendingLock) return;
       this.hud.setVisible(false);
       this.onPause?.();
     };
@@ -466,11 +482,16 @@ export class Game {
       if (this.pendingLock) this.hud.setResume(true);
     });
     window.addEventListener('mousedown', () => {
-      if (!this.pendingLock || this.dialog.isOpen || this.inventoryScreen.isOpen) return;
+      if (!this.pendingLock || this.dialog.isOpen || this.inventoryScreen.isOpen || this.cheatMenu.isOpen) return;
       this.input.requestLock();
     });
 
     window.addEventListener('keydown', (e) => {
+      if (e.code === 'Backquote' && CheatMenu.unlocked && !this.dialog.isOpen) {
+        e.preventDefault();
+        this.openCheats();
+      }
+      if (e.code === 'Escape' && this.cheatMenu.isOpen) this.cheatMenu.close();
       if (e.code === 'Escape' && this.dialog.isOpen) this.dialog.close();
       if ((e.code === 'Escape' || e.code === 'Tab') && this.inventoryScreen.isOpen) {
         e.preventDefault();
@@ -608,7 +629,7 @@ export class Game {
             sprint,
             jump: this.input.isDown('Space'),
             overloaded: isOverloaded(this.state.inventory),
-            noBreathDrain: drugBreathFree(this.state.effects),
+            noBreathDrain: drugBreathFree(this.state.effects) || this.cheats.infiniteBreath,
             weak: this.player.hunger <= SURVIVAL.weakAt || this.player.thirst <= SURVIVAL.weakAt,
             dt: FIXED_DT,
             slowFactor: this.cigarette.speedMul * drugSpeed(this.state.effects, this.clock.day),
@@ -1369,7 +1390,7 @@ export class Game {
   }
 
   private takeDamage(amount: number): void {
-    if (this.graceTimer > 0) return;
+    if (this.graceTimer > 0 || this.cheats.god) return;
     const effects = this.state.effects;
     // Под ударом не поколешься: доза теряется.
     if (effects.using) this.interruptDrug();
@@ -1480,6 +1501,165 @@ export class Game {
       this.player.pitch = 0;
       this.toasts.push('Вылез мокрый и довольный');
     }
+  }
+
+
+  // ─── Тестовый режим ──────────────────────────────────────────────────
+  // Всё, что ниже, доступно только после пароля в главном меню. В обычной
+  // игре ни одна из этих веток не вызывается.
+
+  /** Пароль только что приняли — подскажем, на какой клавише меню. */
+  notifyCheatsUnlocked(): void {
+    this.toasts.push('Тестовый режим включён. Клавиша ` — чит-меню', 'money');
+  }
+
+  /** Открыть чит-меню (кнопка в главном меню и клавиша `). */
+  openCheats(): void {
+    if (!CheatMenu.unlocked) return;
+    document.exitPointerLock();
+    this.cheatMenu.toggle(this.cheatApi(), () => this.resumeAfterUi());
+  }
+
+  /** Куда можно прыгнуть. Точки берём из мира, а не забиваем руками. */
+  private cheatSpots(): CheatSpot[] {
+    const fire = campfirePosition();
+    const seat = this.world.hut.chairs[1];
+    const points = this.interactionPoints;
+    // Ави стоит на новом месте каждую ночь — точку знаем и днём.
+    const avi = aviSpot(this.clock.day, this.world.seed, this.world.terrain);
+    return [
+      { id: 'hut', label: 'хижина', x: seat.x, z: seat.z + 1.6, look: seat },
+      { id: 'fire', label: 'костёр', x: fire.x, z: fire.z + 2.4, look: fire },
+      { id: 'buravchik', label: 'Буравчик', x: points.buravchik.x, z: points.buravchik.z + 1.8, look: points.buravchik },
+      { id: 'tomer', label: 'Томер', x: points.tomer.x, z: points.tomer.z + 1.8, look: points.tomer },
+      { id: 'avi', label: 'Ави (ночная точка)', x: avi.x, z: avi.z + 1.8, look: avi },
+      { id: 'monument', label: 'памятник', x: points.monument.x, z: points.monument.z + 2.2, look: points.monument },
+      { id: 'catamaran', label: 'катамаран', x: points.catamaran.x, z: points.catamaran.z + 2.4, look: points.catamaran },
+      // Смотреть с берега на середину озера.
+      { id: 'lake', label: 'озеро', x: 0, z: WORLD.lakeHalf + 2, look: { x: 0, z: 0 } },
+      { id: 'mountain', label: 'гора Петушок', x: MOUNTAIN.x + 2.5, z: MOUNTAIN.z + 2.5, look: { x: MOUNTAIN.x, z: MOUNTAIN.z } },
+      { id: 'swing', label: 'тарзанка', x: SWING.base.x, z: SWING.base.z + 1.6, look: SWING.aim },
+      // Настил повёрнут, поэтому встаём ровно в его середину.
+      { id: 'bridge', label: 'мост', x: BRIDGE.x, z: BRIDGE.z, look: { x: RIVER.sign.x, z: RIVER.sign.z } },
+      { id: 'river', label: 'Псекупс', x: RIVER.sign.x, z: RIVER.sign.z + 2, look: RIVER.sign },
+    ];
+  }
+
+  /**
+   * Ближайшее место, где можно стоять. Табличка у реки и катамаран стоят
+   * прямо в воде, а проваливаться на дно при телепорте незачем.
+   */
+  private cheatStand(x: number, z: number): { x: number; z: number; y: number } {
+    const fits = (px: number, pz: number): number | null => {
+      const deck = platformAt(this.world.platforms, px, pz);
+      if (deck !== null) return deck;
+      if (this.world.terrain.depth(px, pz) > 0.25) return null;
+      return this.world.terrain.height(px, pz);
+    };
+
+    const here = fits(x, z);
+    if (here !== null) return { x, z, y: here };
+
+    for (let r = 2; r <= 26; r += 2) {
+      for (let i = 0; i < 16; i++) {
+        const a = (i / 16) * Math.PI * 2;
+        const px = x + Math.cos(a) * r;
+        const pz = z + Math.sin(a) * r;
+        const y = fits(px, pz);
+        if (y !== null) return { x: px, z: pz, y };
+      }
+    }
+    return { x, z, y: this.world.terrain.height(x, z) };
+  }
+
+  private cheatTeleport(id: string): void {
+    const spot = this.cheatSpots().find((s) => s.id === id);
+    if (!spot) return;
+    const stand = this.cheatStand(spot.x, spot.z);
+    const look = spot.look ?? { x: spot.x, z: spot.z };
+    this.seat = null;
+    this.chore = null;
+    this.player.x = stand.x;
+    this.player.z = stand.z;
+    this.player.vx = 0;
+    this.player.vz = 0;
+    this.player.vy = 0;
+    this.player.eyeY = stand.y + PLAYER.eyeHeight;
+    // Развернуться лицом к тому, ради чего прыгали.
+    if (Math.hypot(look.x - stand.x, look.z - stand.z) > 0.3) {
+      this.player.yaw = Math.atan2(-(look.x - stand.x), -(look.z - stand.z));
+      this.player.pitch = 0;
+    }
+    // На новом месте лучше не встречать погоню, начатую на старом.
+    this.graceTimer = Math.max(this.graceTimer, 3);
+    this.toasts.push(`Телепорт: ${spot.label}`);
+  }
+
+  private cheatApi(): CheatApi {
+    const inv = this.state.inventory;
+    return {
+      give: (id, count) => {
+        const left = addItem(inv, id, count);
+        if (left > 0) this.toasts.push('В рюкзаке нет места', 'bad');
+      },
+      giveMoney: (amount) => {
+        inv.money += amount;
+      },
+      tools: () => ({
+        hasRod: inv.hasRod,
+        hasFlashlight: inv.hasFlashlight,
+        hasGoodAxe: inv.hasGoodAxe,
+        hasShotgun: inv.hasShotgun,
+        hasHammer: inv.hasHammer,
+        hasKnife: inv.hasKnife,
+      }),
+      setTool: (key: ToolKey, on: boolean) => {
+        inv[key] = on;
+      },
+      day: () => this.clock.day,
+      setDay: (day) => {
+        this.clock.day = Math.max(1, Math.round(day));
+        this.newDay();
+      },
+      setTime: (seconds) => this.setTime(seconds),
+      season: () => seasonOf(this.clock.day),
+      jumpToSeason: (season) => {
+        // Всегда вперёд: назад по календарю ходить нельзя, на днях завязаны
+        // отрастание леса, выдержка вина и сушка шкур.
+        const target = SEASON_ORDER.indexOf(season) * SEASONS.length + 5;
+        const now = (this.clock.day - 1) % (SEASONS.length * SEASON_ORDER.length);
+        const total = SEASONS.length * SEASON_ORDER.length;
+        this.clock.day += ((target - now) % total + total) % total;
+        this.newDay();
+      },
+      teleports: () => this.cheatSpots().map(({ id, label }) => ({ id, label })),
+      teleport: (id) => this.cheatTeleport(id),
+      refill: () => {
+        this.player.health = PLAYER.maxHealth;
+        this.player.breath = this.breathMax();
+        this.player.hunger = SURVIVAL.max;
+        this.player.thirst = SURVIVAL.max;
+        this.player.warmth = SURVIVAL.max;
+        this.hurtFlash = 0;
+      },
+      flags: () => ({ ...this.cheats }),
+      setFlag: (key: FlagKey, on: boolean) => {
+        this.cheats[key] = on;
+      },
+      clearZombies: () => {
+        this.zombies = [];
+        this.zombieView.sync(this.zombies);
+      },
+      reviveAnimals: () => {
+        for (const a of this.animals) {
+          if (a.state !== 'dead') continue;
+          // Проще всего дать симуляции самой поднять зверя на следующем шаге.
+          a.deadFor = ANIMALS.respawn + 1;
+          a.homeX = a.x + 200;
+          a.homeZ = a.z;
+        }
+      },
+    };
   }
 
   /** Сохранить прямо сейчас: нужно перед перезагрузкой страницы. */
@@ -2077,6 +2257,12 @@ export class Game {
   private updateSurvival(dt: number): void {
     const p = this.player;
     const inv = this.state.inventory;
+    if (this.cheats.noNeeds) {
+      p.hunger = SURVIVAL.max;
+      p.thirst = SURVIVAL.max;
+      p.warmth = SURVIVAL.max;
+      return;
+    }
     p.hunger = clamp(p.hunger - SURVIVAL.hungerDrain * dt, 0, SURVIVAL.max);
     p.thirst = clamp(p.thirst - SURVIVAL.thirstDrain * dt, 0, SURVIVAL.max);
 
@@ -2097,7 +2283,7 @@ export class Game {
     if (p.hunger <= 0) drain += SURVIVAL.starveDamage;
     if (p.thirst <= 0) drain += SURVIVAL.starveDamage;
     if (p.warmth <= 0) drain += SURVIVAL.freezeDamage;
-    if (drain > 0 && !this.dying && this.graceTimer <= 0) {
+    if (drain > 0 && !this.dying && this.graceTimer <= 0 && !this.cheats.god) {
       p.health -= drain * dt;
       if (p.health <= 0) {
         p.health = 0;

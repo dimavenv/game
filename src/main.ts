@@ -1,6 +1,7 @@
 import './client/ui/style.css';
 import { Game } from './client/game';
 import { Intro } from './client/ui/intro';
+import { CheatMenu } from './client/ui/cheats';
 import { QUALITY, QUALITY_ORDER, loadQuality, saveQuality } from './client/quality';
 
 const canvas = document.getElementById('game') as HTMLCanvasElement;
@@ -9,6 +10,10 @@ const play = document.getElementById('play') as HTMLButtonElement;
 const restart = document.getElementById('restart') as HTMLButtonElement;
 const disclaimer = document.getElementById('disclaimer') as HTMLButtonElement;
 const qualityButtons = document.getElementById('quality-buttons') as HTMLDivElement;
+const cheatOpen = document.getElementById('cheat-open') as HTMLButtonElement;
+const cheatGate = document.getElementById('cheat-gate') as HTMLDivElement;
+const cheatPassword = document.getElementById('cheat-password') as HTMLInputElement;
+const cheatEnter = document.getElementById('cheat-enter') as HTMLButtonElement;
 
 const game = new Game(canvas);
 const intro = new Intro();
@@ -58,4 +63,41 @@ restart.addEventListener('click', () => {
 play.addEventListener('click', () => {
   menu.classList.add('hidden');
   void game.start(pointerLock);
+});
+
+// Тестовый режим за паролем: пока он не введён, читов в игре просто нет.
+function refreshCheatButton(): void {
+  cheatOpen.textContent = CheatMenu.unlocked ? 'Чит-меню (`)' : 'Тестовый режим';
+}
+refreshCheatButton();
+
+cheatOpen.addEventListener('click', () => {
+  if (CheatMenu.unlocked) {
+    menu.classList.add('hidden');
+    // Без захвата мыши: иначе панель откроется, а курсором по ней не попасть.
+    // Захват вернётся сам, когда чит-меню закроют.
+    void game.start(false).then(() => game.openCheats());
+    return;
+  }
+  cheatGate.classList.toggle('hidden');
+  cheatPassword.focus();
+});
+
+function tryUnlock(): void {
+  if (!CheatMenu.unlock(cheatPassword.value)) {
+    cheatPassword.classList.add('bad');
+    cheatPassword.value = '';
+    return;
+  }
+  cheatPassword.classList.remove('bad');
+  cheatPassword.value = '';
+  cheatGate.classList.add('hidden');
+  refreshCheatButton();
+  game.notifyCheatsUnlocked();
+}
+
+cheatEnter.addEventListener('click', tryUnlock);
+cheatPassword.addEventListener('keydown', (e) => {
+  cheatPassword.classList.remove('bad');
+  if (e.key === 'Enter') tryUnlock();
 });
