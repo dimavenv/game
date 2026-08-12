@@ -126,6 +126,7 @@ const SHOP: ShopEntry[] = [
     buy: (s) => { s.inventory.hasFlashlight = true; },
   },
   { id: 'buy-hammer', label: 'Молот', price: ECONOMY.prices.hammer, owned: (s) => s.inventory.hasHammer, buy: (s) => { s.inventory.hasHammer = true; } },
+  { id: 'buy-beer', label: 'Пиво', price: ECONOMY.prices.beer, item: { id: 'beer', count: 1 } },
   { id: 'buy-knife', label: 'Разделочный нож', price: ECONOMY.prices.knife, owned: (s) => s.inventory.hasKnife, buy: (s) => { s.inventory.hasKnife = true; } },
   { id: 'buy-axe', label: 'Хороший топор', price: ECONOMY.prices.goodAxe, owned: (s) => s.inventory.hasGoodAxe, buy: (s) => { s.inventory.hasGoodAxe = true; } },
   { id: 'buy-shotgun', label: 'Дробовик', price: ECONOMY.prices.shotgun, owned: (s) => s.inventory.hasShotgun, buy: (s) => { s.inventory.hasShotgun = true; } },
@@ -168,8 +169,40 @@ function fishCount(state: GameState): number {
   return FISH_ITEMS.reduce((n, id) => n + countItem(state.inventory, id), 0);
 }
 
-export function tomerDialog(state: GameState): DialogSpec {
+/** Сколько штук предлагаем продать за раз. */
+function sellPortions(count: number): number[] {
+  const out = new Set<number>();
+  for (const n of [1, 5, 10, 25]) if (n < count) out.add(n);
+  if (count > 2) out.add(Math.floor(count / 2));
+  out.add(count);
+  return [...out].sort((a, b) => a - b);
+}
+
+/**
+ * Прилавок Томера. Если выбран товар на продажу, вместо лавки показываем
+ * экран количества: сдавать всё подчистую нужно не всегда.
+ */
+export function tomerDialog(state: GameState, selling: ItemId | null = null): DialogSpec {
   const inv = state.inventory;
+
+  if (selling) {
+    const have = countItem(inv, selling);
+    const price = ITEMS[selling].sell;
+    const actions = sellPortions(have).map((n) => ({
+      id: `sell-${selling}-${n}`,
+      label: n === have ? `Всё (${n})` : `${n} шт.`,
+      note: `+${price * n} ₪`,
+      disabled: false,
+    }));
+    actions.push({ id: 'sell-back', label: 'Назад', note: '', disabled: false });
+    return {
+      title: 'Томер Загур',
+      speech: `${ITEMS[selling].name}: беру по ${price} ₪ за штуку. Сколько отдаёшь?`,
+      actions,
+      footer: `У тебя ${have} шт. · в кармане ${inv.money} ₪`,
+    };
+  }
+
   const actions = SHOP.map((entry) => {
     const owned = entry.owned?.(state) ?? false;
     return {
@@ -193,9 +226,9 @@ export function tomerDialog(state: GameState): DialogSpec {
     const count = countItem(inv, id);
     if (count <= 0) continue;
     actions.push({
-      id: `sell-${id}`,
+      id: `pick-${id}`,
       label: `Продать: ${ITEMS[id].name} (${count})`,
-      note: `+${ITEMS[id].sell * count} ₪`,
+      note: `по ${ITEMS[id].sell} ₪`,
       disabled: false,
     });
   }
@@ -251,14 +284,23 @@ export function tomerAction(id: string, state: GameState): DialogResult {
     };
   }
 
-  if (id.startsWith('sell-')) {
-    const itemId = id.slice(5) as ItemId;
-    const count = countItem(inv, itemId);
+  // sell-<item>-<count>: количество выбрано на втором экране.
+  const portion = /^sell-(.+)-(\d+)$/.exec(id);
+  if (portion) {
+    const itemId = portion[1] as ItemId;
+    const want = Number(portion[2]);
+    const have = countItem(inv, itemId);
+    const count = Math.min(want, have);
     if (count <= 0) return {};
     const sum = ITEMS[itemId].sell * count;
     removeItem(inv, itemId, count);
     inv.money += sum;
-    return { toast: `${ITEMS[itemId].name} — продано за ${sum} ₪`, tone: 'money', sound: 'coins', voice: 'tomer_sell' };
+    return {
+      toast: `${ITEMS[itemId].name} × ${count} — ${sum} ₪`,
+      tone: 'money',
+      sound: 'coins',
+      voice: 'tomer_sell',
+    };
   }
 
   if (id === 'leave') return { close: true };
@@ -271,6 +313,8 @@ export function tomerAction(id: string, state: GameState): DialogResult {
 const AVI_SHOP: ShopEntry[] = [
   { id: 'avi-shells', label: 'Патроны, 5 шт.', price: AVI.prices.shells5, item: { id: 'shells', count: 5 } },
   { id: 'avi-bandage', label: 'Бинт', price: AVI.prices.bandage, item: { id: 'bandage', count: 1 } },
+  // Пиво у Ави дешевле, чем у брата: он и берёт его не в магазине.
+  { id: 'avi-beer', label: 'Пиво', price: ECONOMY.prices.beerAvi, item: { id: 'beer', count: 1 } },
   ...Object.values(DRUGS).map((drug) => ({
     id: `avi-${drug.item}`,
     label: drug.name[0].toUpperCase() + drug.name.slice(1),

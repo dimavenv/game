@@ -124,6 +124,8 @@ export interface CatamaranLayout {
   board: { x: number; z: number };
   /** Куда садится игрок. */
   seat: { x: number; y: number; z: number };
+  /** Правое сиденье: там сидит Петровна. */
+  petrovna: { x: number; y: number; z: number };
   /** Поплавки как круглые препятствия: сквозь катамаран не пройти. */
   obstacles: { x: number; z: number; radius: number }[];
 }
@@ -162,6 +164,8 @@ export function catamaranLayout(): CatamaranLayout {
 
   const board = toWorld(0, -half - 0.4);
   const seat = toWorld(0, 0.2);
+  // Петровна занимает правое сиденье, игроку остаётся левое.
+  const petrovna = toWorld(0.85, 0.15);
   return {
     x,
     z,
@@ -169,6 +173,7 @@ export function catamaranLayout(): CatamaranLayout {
     deckY: CATAMARAN.deckY,
     board,
     seat: { x: seat.x, y: WORLD.waterLevel + CATAMARAN.deckY, z: seat.z },
+    petrovna: { x: petrovna.x, y: WORLD.waterLevel + CATAMARAN.deckY, z: petrovna.z },
     obstacles,
   };
 }

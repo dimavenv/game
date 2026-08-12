@@ -254,6 +254,27 @@ export class GameAudio {
     this.burst({ duration: 0.12, gain: 0.16, type: 'bandpass', freq: 900, freqTo: 300, q: 1.6 });
   }
 
+  /** Босая нога по мезге: шлепок с брызгами. */
+  stomp(): void {
+    if (this.playSlot('stomp', 0.7)) return;
+    this.burst({ duration: 0.22, gain: 0.14, type: 'lowpass', freq: 900, freqTo: 180, q: 0.9 });
+    this.blip(90, 0.1, 0.09, 'sine');
+  }
+
+  /** Укус: короткий влажный хруст. */
+  bite(): void {
+    if (this.playSlot('bite', 0.6)) return;
+    this.burst({ duration: 0.14, gain: 0.11, type: 'bandpass', freq: 1400, freqTo: 420, q: 1.4 });
+  }
+
+  /** Глоток из бутылки: булькающий низ и звонкое горлышко. */
+  gulp(): void {
+    if (this.playSlot('gulp', 0.6)) return;
+    this.blip(220, 0.14, 0.08, 'sine');
+    window.setTimeout(() => this.blip(150, 0.12, 0.07, 'sine'), 120);
+    this.burst({ duration: 0.2, gain: 0.05, type: 'lowpass', freq: 700, freqTo: 260, q: 0.8 });
+  }
+
   /** Нож по туше: влажный протяжный шорох, идёт всё время разделки. */
   butcher(): void {
     if (this.playSlot('butcher', 0.5)) return;

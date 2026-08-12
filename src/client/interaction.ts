@@ -30,6 +30,7 @@ export type TargetKind =
   | 'carcass'
   | 'water'
   | 'campfire'
+  | 'petrovna'
   | 'structure';
 
 export interface Target {
@@ -57,6 +58,8 @@ export interface InteractionPoints {
   catamaran: THREE.Vector3;
   /** Лавка в беседке на вершине Петушка. */
   gazebo: THREE.Vector3;
+  /** Петровна на катамаране: с ней пока только здороваются взглядом. */
+  petrovna: THREE.Vector3;
   /** Перекладина тарзанки. */
   swing: THREE.Vector3;
   appleTrees: THREE.Vector3[];
@@ -177,6 +180,20 @@ export class Interactions {
     const chair = near(this.points.chair, INTERACT.range, 0.2);
     if (chair !== null) {
       consider({ kind: 'chair', index: -1, hint: 'E — сесть', distance: chair, priority: 0 });
+    }
+
+    // Петровна: имя над головой есть, разговора пока нет.
+    const petrovna = near(this.points.petrovna, INTERACT.npcRange, 0.3);
+    if (petrovna !== null) {
+      consider({
+        kind: 'petrovna',
+        index: -1,
+        name: 'Петровна',
+        labelPoint: this.points.petrovna,
+        hint: 'Петровна смотрит на воду',
+        distance: petrovna,
+        priority: 0,
+      });
     }
 
     const catamaran = near(this.points.catamaran, INTERACT.range + 0.6, 0.2);

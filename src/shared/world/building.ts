@@ -1,6 +1,6 @@
 import { WORLD } from '../balance';
 import type { ItemStack } from '../inventory';
-import type { BoxCollider } from './buildings';
+import type { BoxCollider, Platform } from './buildings';
 import type { Terrain } from './terrain';
 import { Terrain as TerrainClass } from './terrain';
 import type { WorldData } from './worldgen';
@@ -179,7 +179,8 @@ export function placementError(
   const depth = terrain.depth(x, z);
   if (blueprint.onWater) {
     if (depth < 0.05) return 'Причал ставится на воду';
-    if (depth > 1.4) return 'Здесь слишком глубоко';
+    // Причал сам встаёт от кромки, поэтому дальний конец уходит поглубже.
+    if (depth > 2.6) return 'Здесь слишком глубоко';
   } else {
     if (depth > 0.02) return 'Здесь вода';
     if (terrain.slope(x, z) > 0.32) return 'Слишком круто';
@@ -218,6 +219,54 @@ function overlaps(x: number, z: number, blueprint: Blueprint, rot: number, box: 
 }
 
 /** Коллайдер построенного: с поворотом на 90° меняем габариты местами. */
+/** Высота настила причала над его основанием: доски лежат на сваях. */
+export const PIER_DECK = 0.43;
+
+/** Настил построенного причала: по нему ходят так же, как по мосту. */
+export function structurePlatform(s: PlacedStructure): Platform | null {
+  if (s.kind !== 'pier') return null;
+  const blueprint = BLUEPRINTS[s.kind];
+  return { x: s.x, z: s.z, hw: blueprint.hw, hd: blueprint.hd, yaw: s.rot, y: s.y + PIER_DECK };
+}
+
+/**
+ * Причал сам примагничивается к берегу: игрок целится примерно, а мостки
+ * встают перпендикулярно кромке воды и упираются в сушу ближним концом.
+ * Возвращает null, если рядом нет озера — тогда ставится как раньше.
+ */
+export function snapPier(x: number, z: number, terrain: Terrain): { x: number; z: number; rot: number } | null {
+  const half = WORLD.lakeHalf;
+  // У квадратного озера берег всегда вдоль оси: выбираем ближайшую кромку.
+  if (TerrainClass.lakeDistance(x, z) > half + 14) return null;
+  const alongX = Math.abs(x) >= Math.abs(z);
+  const edge = alongX ? x : z;
+  const sign = edge >= 0 ? 1 : -1;
+  // Вдоль берега двигаться можно, поперёк — нет.
+  const along = clampTo(alongX ? z : x, half - 4);
+
+  // Ищем кромку воды: идём от берега внутрь, пока не станет мокро.
+  let waterline = sign * half;
+  for (let d = 0; d <= 12; d += 0.2) {
+    const c = sign * (half + 2) - sign * d;
+    const px = alongX ? c : along;
+    const pz = alongX ? along : c;
+    if (terrain.depth(px, pz) >= 0.06) {
+      waterline = c;
+      break;
+    }
+  }
+
+  const blueprint = BLUEPRINTS.pier;
+  // Ближний конец настила упирается в кромку, дальний уходит в воду.
+  const center = waterline - sign * blueprint.hd;
+  const rot = alongX ? (sign > 0 ? Math.PI / 2 : -Math.PI / 2) : sign > 0 ? Math.PI : 0;
+  return { x: alongX ? center : along, z: alongX ? along : center, rot };
+}
+
+function clampTo(value: number, limit: number): number {
+  return Math.max(-limit, Math.min(limit, value));
+}
+
 export function structureCollider(s: PlacedStructure): BoxCollider | null {
   const blueprint = BLUEPRINTS[s.kind];
   if (!blueprint.solid) return null;

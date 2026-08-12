@@ -100,6 +100,9 @@ export const ECONOMY = {
     shells5: 60,
     hammer: 280,
     knife: 120,
+    /** Пиво: у Томера дороже, у Ави — как у своих. */
+    beer: 45,
+    beerAvi: 28,
     vineSapling: 60,
     bottles5: 30,
   },
@@ -383,7 +386,7 @@ export const SURVIVAL = {
   weakAt: 12,
   /** Сколько восстанавливают еда и питьё. */
   food: { apple: 12, meat: 8, meat_cooked: 42, fish: 26, grape: 8 },
-  drink: { water_clean: 55, wine: 30 },
+  drink: { water_clean: 55, wine: 30, beer: 38 },
   /** Сырое мясо ещё и подтравливает. */
   rawMeatDamage: 8,
   /** У костра и печки греешься. */

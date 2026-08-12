@@ -148,9 +148,14 @@ interface LegSpec {
 /**
  * Четыре ноги. Каждая — коническая, с пяткой внизу; вращается вокруг бедра,
  * а диагональные пары идут в противофазе, как у настоящего зверя.
+ *
+ * Нога нарочно уходит выше точки вращения и прикрыта бедром: иначе между
+ * тонкой ногой и широким брюхом видна щель и зверь выглядит разобранным.
  */
 function legs(spec: LegSpec): Part[] {
   const out: Part[] = [];
+  // Насколько нога утоплена в тушу.
+  const inset = spec.height * 0.3;
   for (const sx of [-1, 1]) {
     for (const [sz, z] of [
       [1, spec.frontZ],
@@ -160,7 +165,23 @@ function legs(spec: LegSpec): Part[] {
       // Диагональ: левая передняя идёт вместе с правой задней.
       const phase = sx * sz > 0 ? 0 : Math.PI;
       out.push({
-        geo: cone(spec.top, spec.bottom, spec.height, spec.hex, pivot[0], spec.height / 2, z),
+        geo: cone(
+          spec.top * 1.35,
+          spec.bottom,
+          spec.height + inset,
+          spec.hex,
+          pivot[0],
+          (spec.height + inset) / 2,
+          z,
+        ),
+        pivot,
+        phase,
+      });
+      // Бедро: шар вокруг точки вращения закрывает стык с тушей.
+      out.push({
+        geo: ball(spec.top * 2.6, spec.hex, pivot[0] * 0.8, spec.height + spec.top * 1.4, z, {
+          scale: [0.75, 1, 1.15],
+        }),
         pivot,
         phase,
       });
@@ -250,7 +271,7 @@ function buildCow(): Part[] {
     { geo: ball(0.15, 0xe0b4b0, 0, 0.66, -0.24, { scale: [1, 0.75, 1.1] }) },
     { geo: cone(0.02, 0.045, 0.55, white, 0, 0.9, -0.62, { rx: 0.25 }) },
     { geo: ball(0.07, spot, 0, 0.62, -0.68, { scale: [1, 1.4, 1] }) },
-    ...legs({ hex: 0xd6d0c4, spanX: 0.22, frontZ: 0.4, backZ: -0.4, height: 0.66, top: 0.062, bottom: 0.036 }),
+    ...legs({ hex: 0xd6d0c4, spanX: 0.19, frontZ: 0.38, backZ: -0.38, height: 0.64, top: 0.062, bottom: 0.036 }),
   ];
 }
 
@@ -275,7 +296,7 @@ function buildDeer(): Part[] {
     { geo: cone(0.012, 0.05, 0.14, light, 0.1, 1.36, 0.36, { rz: -1.1, rx: -0.3 }) },
     // Белое зеркало сзади.
     { geo: ball(0.11, 0xe8e2d4, 0, 0.9, -0.4, { scale: [1, 1, 0.5] }) },
-    ...legs({ hex: 0x8a5f3c, spanX: 0.13, frontZ: 0.24, backZ: -0.25, height: 0.66, top: 0.032, bottom: 0.016 }),
+    ...legs({ hex: 0x8a5f3c, spanX: 0.115, frontZ: 0.22, backZ: -0.23, height: 0.66, top: 0.032, bottom: 0.016 }),
   ];
 }
 

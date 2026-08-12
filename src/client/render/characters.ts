@@ -61,7 +61,9 @@ export interface NpcHandle {
   update(dt: number): void;
 }
 
-const LOOKS: Record<'buravchik' | 'tomer' | 'avi', BodyColors> = {
+export type NpcName = 'buravchik' | 'tomer' | 'avi' | 'petrovna';
+
+const LOOKS: Record<NpcName, BodyColors> = {
   // Буравчик: борода лопатой, кепка, что-то защитного цвета.
   buravchik: {
     skin: 0xc79a72,
@@ -89,16 +91,19 @@ const LOOKS: Record<'buravchik' | 'tomer' | 'avi', BodyColors> = {
     hood: 0x1f2226,
     beard: 0x2b2319,
   },
+  // Петровна: сидит на катамаране в жёлтой ветровке, с хвостом.
+  petrovna: {
+    skin: 0xd6a97e,
+    cloth: 0xd8a83a,
+    trousers: 0x3b4a63,
+    shoes: 0xb84f3c,
+    hair: 0x6b4326,
+    ponytail: 0x6b4326,
+  },
 };
 
-export function createNpc(
-  name: 'buravchik' | 'tomer' | 'avi',
-  x: number,
-  y: number,
-  z: number,
-  rotation: number,
-): NpcHandle {
-  const pose: Pose = name === 'buravchik' ? 'sitting' : 'standing';
+export function createNpc(name: NpcName, x: number, y: number, z: number, rotation: number): NpcHandle {
+  const pose: Pose = name === 'buravchik' || name === 'petrovna' ? 'sitting' : 'standing';
   const built = buildHuman(LOOKS[name], pose);
 
   built.group.position.set(x, y, z);

@@ -16,6 +16,8 @@ export interface BodyColors {
   /** Капюшон вместо шапки — им отличается Ави. */
   hood?: number;
   beard?: number;
+  /** Хвост из-под волос: им отличается Петровна. */
+  ponytail?: number;
 }
 
 export interface BodyOptions {
@@ -177,6 +179,17 @@ export function buildBody(colors: BodyColors, options: BodyOptions = {}): BodyRi
     const back = new THREE.Mesh(new THREE.BoxGeometry(0.215, 0.16, 0.06), hair);
     back.position.set(0, 0.13, -0.09);
     head.add(back);
+  }
+
+  if (colors.ponytail !== undefined) {
+    const strand = material(colors.ponytail, 1);
+    const band = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.07, 0.07), strand);
+    band.position.set(0, 0.16, -0.14);
+    head.add(band);
+    const tail = new THREE.Mesh(taper(new THREE.BoxGeometry(0.11, 0.34, 0.09), 0.55), strand);
+    tail.position.set(0, -0.02, -0.17);
+    tail.rotation.x = -0.28;
+    head.add(tail);
   }
 
   if (colors.hat !== undefined) {

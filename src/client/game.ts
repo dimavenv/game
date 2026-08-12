@@ -52,7 +52,9 @@ import {
   BLUEPRINTS,
   CHEST_SLOTS,
   placementError,
+  snapPier,
   structureCollider,
+  structurePlatform,
   type BlueprintId,
   type PlacedStructure,
 } from '../shared/world/building';
@@ -106,6 +108,8 @@ import { Input } from './input';
 import { AxeItem } from './items/axe';
 import { HammerItem } from './items/hammer';
 import { KnifeItem } from './items/knife';
+import { StompScene } from './items/stomp';
+import { Meal } from './items/meal';
 import { CigaretteItem } from './items/cigarette';
 import { DrugKit } from './items/drugkit';
 import { RodItem } from './items/rod';
@@ -116,7 +120,7 @@ import { createNpc, type NpcHandle } from './render/characters';
 import { Forest, TREE_HEIGHT } from './render/forest';
 import { GroundCover } from './render/groundcover';
 import { buildAppleTree, buildMonument, ChopEffects, type AppleTreeHandle } from './render/nature';
-import { PlacedStructures } from './render/placed';
+import { PLACED_MATERIALS, PlacedStructures } from './render/placed';
 import { buildVine, buildWildVine, type VineHandle } from './render/vines';
 import { Sky } from './render/sky';
 import { Smoke } from './render/smoke';
@@ -224,7 +228,7 @@ export class Game {
   private readonly chopEffects = new ChopEffects();
   private readonly season = new SeasonLook();
   private readonly appleTrees: AppleTreeHandle[] = [];
-  private readonly npcs: { buravchik: NpcHandle; tomer: NpcHandle; avi: NpcHandle };
+  private readonly npcs: { buravchik: NpcHandle; tomer: NpcHandle; avi: NpcHandle; petrovna: NpcHandle };
   private readonly aviLantern: THREE.PointLight;
   private aviHere: AviSpot | null = null;
   private readonly flashlight: THREE.SpotLight;
@@ -235,6 +239,8 @@ export class Game {
   private readonly shotgun: ShotgunItem;
   private readonly hammer: HammerItem;
   private readonly knife: KnifeItem;
+  private readonly stomp: StompScene;
+  private readonly meal: Meal;
   private readonly drugKit: DrugKit;
   private readonly placed = new PlacedStructures();
   private readonly inventoryScreen = new InventoryScreen();
@@ -403,9 +409,22 @@ export class Game {
         Math.PI,
       ),
       avi: createNpc('avi', 0, -999, 0, 0),
+      // Петровна сидит на катамаране и никуда оттуда не собирается.
+      petrovna: createNpc(
+        'petrovna',
+        this.world.catamaran.petrovna.x,
+        this.world.catamaran.petrovna.y,
+        this.world.catamaran.petrovna.z,
+        this.world.catamaran.yaw,
+      ),
     };
     this.npcs.avi.group.visible = false;
-    this.scene.add(this.npcs.buravchik.group, this.npcs.tomer.group, this.npcs.avi.group);
+    this.scene.add(
+      this.npcs.buravchik.group,
+      this.npcs.tomer.group,
+      this.npcs.avi.group,
+      this.npcs.petrovna.group,
+    );
 
     // Фонарь Ави: единственный огонёк в лесу ночью.
     this.aviLantern = new THREE.PointLight(0xffc46a, 0, 18, 2);
@@ -422,6 +441,8 @@ export class Game {
     this.shotgun = new ShotgunItem(this.camera);
     this.hammer = new HammerItem(this.camera);
     this.knife = new KnifeItem(this.camera);
+    this.stomp = new StompScene(this.camera);
+    this.meal = new Meal(this.camera);
     this.drugKit = new DrugKit(this.camera, this.audio, this.smoke);
     this.scene.add(this.zombieView.group);
     this.scene.add(this.placed.group);
@@ -448,6 +469,7 @@ export class Game {
       catamaran: new THREE.Vector3(board.x, WORLD.waterLevel, board.z),
       // Целиться надо в лавку, а не в центр беседки.
       gazebo: this.gazebo.seat,
+      petrovna: this.npcs.petrovna.labelPoint,
       swing: this.ropeSwing.grabPoint(new THREE.Vector3()),
       appleTrees: this.appleTrees.map((t) => t.position),
       pebbles: this.world.pebbles.map((p) => new THREE.Vector3(p.x, p.y, p.z)),
@@ -514,6 +536,8 @@ export class Game {
 
     // Все обычные материалы сцены получают сезонный оттенок и снег.
     this.season.attachAll(this.scene);
+    // Постройки появляются позже, поэтому их материалы подключаем вручную.
+    for (const m of PLACED_MATERIALS) this.season.attach(m);
 
     // Постобработка нужна только там, где есть что подсвечивать.
     if (q.bloom > 0 || q.samples > 0) {
@@ -589,6 +613,8 @@ export class Game {
     if (this.axe.update(dt)) this.applyAxeHit();
     if (this.hammer.update(dt)) this.applyHammerHit();
     this.knife.update(dt);
+    if (this.stomp.update(dt)) this.finishStomp();
+    this.meal.update(dt);
     if (this.shotgun.update(dt) === 'reload-done') this.finishReload();
     if (this.bandaging > 0) this.bandaging -= dt;
     if (this.graceTimer > 0) this.graceTimer -= dt;
@@ -616,7 +642,7 @@ export class Game {
 
     if (this.seat && (forward !== 0 || strafe !== 0)) this.seat = null;
 
-    if (!this.seat && !this.ropeSwing.active && !this.chore) {
+    if (!this.seat && !this.ropeSwing.active && !this.chore && !this.stomp.active) {
       const breathMax = this.breathMax();
       this.accumulator += dt;
       let steps = 0;
@@ -875,7 +901,7 @@ export class Game {
   }
 
   private interact(): void {
-    if (this.ropeSwing.active || this.state.effects.using || this.chore) return;
+    if (this.ropeSwing.active || this.state.effects.using || this.chore || this.stomp.active) return;
     const target = this.target;
     if (!target) return;
 
@@ -1009,10 +1035,22 @@ export class Game {
 
   private openTomer(): void {
     this.audio.playSlot('tomer_greet');
-    const spec = (): DialogSpec => tomerDialog(this.state);
+    // Какой товар сейчас продаём: на втором экране выбирается количество.
+    let selling: ItemId | null = null;
+    const spec = (): DialogSpec => tomerDialog(this.state, selling);
     this.openDialog(spec, (id) => {
+      if (id.startsWith('pick-')) {
+        selling = id.slice(5) as ItemId;
+        return false;
+      }
+      if (id === 'sell-back') {
+        selling = null;
+        return false;
+      }
       const result = tomerAction(id, this.state);
       this.applyDialogResult(result);
+      // Продали всё до последнего — возвращаемся в лавку.
+      if (selling && countItem(this.state.inventory, selling) <= 0) selling = null;
       return result.close === true;
     });
   }
@@ -1100,6 +1138,19 @@ export class Game {
       Math.sin(this.bob) * 0.012 * amp,
     );
 
+    // Еда и питьё: голова тянется к куску и запрокидывается на глотке.
+    if (this.meal.active) {
+      this.camera.rotation.x += this.meal.pitch;
+      this.camera.rotation.z += this.meal.roll;
+    }
+
+    // Топтание винограда: игрок стоит в чане и смотрит себе под ноги.
+    if (this.stomp.active) {
+      this.camera.position.y += this.stomp.lift;
+      this.camera.rotation.x += this.stomp.pitch;
+      this.camera.rotation.z += this.stomp.roll;
+    }
+
     // Сценарий употребления ведёт камеру сам: наклон, крен, дрожь.
     if (this.drugKit.active) {
       const kit = this.drugKit;
@@ -1125,13 +1176,14 @@ export class Game {
     // Покров едет за камерой: в кресле и на катамаране она уходит от игрока.
     this.cover.update(dt, this.camera.position.x, this.camera.position.z);
     this.catamaran.update(dt);
-    this.placed.sync(this.state.world.structures);
+    this.placed.sync(this.state.world.structures, this.clock.day);
     this.syncVines();
     this.updateGhost();
     if (this.pressing > 0) this.pressing = Math.max(0, this.pressing - dt);
     this.chopEffects.update(dt);
     this.npcs.buravchik.update(dt);
     this.npcs.tomer.update(dt);
+    this.npcs.petrovna.update(dt);
 
     // Календарь: лёд на озере, снег и цвет сезона.
     const day = this.clock.day;
@@ -1232,6 +1284,8 @@ export class Game {
   private hintText(): string {
     if (this.ropeSwing.active) return this.ropeSwing.hint;
     if (this.drugKit.active) return this.drugKit.hint;
+    if (this.stomp.active) return this.stomp.hint;
+    if (this.meal.active) return this.meal.hint;
     if (this.chore) {
       const done = Math.round((1 - this.chore.time / this.chore.total) * 100);
       return `${this.chore.label}… ${done}%`;
@@ -1757,28 +1811,40 @@ export class Game {
   }
 
   /** Куда смотрит игрок на земле — туда и встанет призрак постройки. */
-  private buildTarget(): { x: number; z: number; y: number } {
+  private buildTarget(): { x: number; z: number; y: number; rot: number } {
     const distance = 4.5;
-    const x = this.player.x - Math.sin(this.player.yaw) * distance;
-    const z = this.player.z - Math.cos(this.player.yaw) * distance;
+    let x = this.player.x - Math.sin(this.player.yaw) * distance;
+    let z = this.player.z - Math.cos(this.player.yaw) * distance;
+    let rot = this.player.yaw;
     const blueprint = BLUEPRINTS[this.buildKind];
+
+    // Причал сам примагничивается к кромке воды и встаёт поперёк берега.
+    if (this.buildKind === 'pier') {
+      const snapped = snapPier(x, z, this.world.terrain);
+      if (snapped) {
+        x = snapped.x;
+        z = snapped.z;
+        rot = snapped.rot;
+      }
+    }
+
     const y = blueprint.onWater ? 0 : this.world.terrain.height(x, z);
-    return { x, z, y };
+    return { x, z, y, rot };
   }
 
   private updateGhost(): void {
     if (!this.buildMode) return;
-    const { x, z, y } = this.buildTarget();
+    const { x, z, y, rot } = this.buildTarget();
     const error = placementError(
       BLUEPRINTS[this.buildKind],
       x,
       z,
-      this.player.yaw,
+      rot,
       this.world,
       this.state.world.structures,
     );
     const affordable = this.buildMenu.affordable(this.state.inventory, this.buildKind);
-    this.placed.showGhost(this.buildKind, x, y, z, this.player.yaw, error === null && affordable);
+    this.placed.showGhost(this.buildKind, x, y, z, rot, error === null && affordable);
   }
 
   private placeStructure(): void {
@@ -1789,8 +1855,8 @@ export class Game {
       return;
     }
 
-    const { x, z, y } = this.buildTarget();
-    const error = placementError(blueprint, x, z, this.player.yaw, this.world, this.state.world.structures);
+    const { x, z, y, rot } = this.buildTarget();
+    const error = placementError(blueprint, x, z, rot, this.world, this.state.world.structures);
     if (error) {
       this.toasts.push(error, 'bad');
       return;
@@ -1806,7 +1872,7 @@ export class Game {
       x,
       z,
       y,
-      rot: this.player.yaw,
+      rot,
       builtDay: this.clock.day,
     };
     if (this.buildKind === 'chest') structure.storage = Array.from({ length: CHEST_SLOTS }, () => null);
@@ -1824,6 +1890,9 @@ export class Game {
   private registerStructureCollider(structure: PlacedStructure): void {
     const collider = structureCollider(structure);
     if (collider) this.world.boxes.push(collider);
+    // По настилу причала надо ходить, а не проваливаться сквозь него.
+    const platform = structurePlatform(structure);
+    if (platform) this.world.platforms.push(platform);
   }
 
 
@@ -2059,22 +2128,38 @@ export class Game {
     this.toasts.push(`Грозди: +${count - left}`);
   }
 
-  /** Топчем виноград: за раз уходит несколько гроздей и выходит сусло. */
+  /**
+   * Топчем виноград. Игрок забирается в чан и месит грозди ногами: сцена от
+   * первого лица на несколько ударов, а сусло падает в рюкзак в конце.
+   */
   private treadGrapes(structure: PlacedStructure): void {
-    if (this.pressing > 0) return;
+    if (this.stomp.active) return;
     const inv = this.state.inventory;
     if (countItem(inv, 'grape') < WINE.grapesPerMust) {
       this.toasts.push(`Нужно ${WINE.grapesPerMust} гроздей`, 'bad');
       return;
     }
     removeItem(inv, 'grape', WINE.grapesPerMust);
-    this.pressing = WINE.pressTime;
     structure.juice = (structure.juice ?? 0) + 1;
-    window.setTimeout(() => {
-      if (addItem(inv, 'must', 1) > 0) this.toasts.push('Сусло некуда налить', 'bad');
-      else this.toasts.push('Сусло: +1');
-      this.audio.splash(0.4);
-    }, WINE.pressTime * 1000);
+    // Встаём прямо в чан: ноги видно, а из чана уже не выйти до конца.
+    this.seat = null;
+    this.player.x = structure.x;
+    this.player.z = structure.z;
+    this.player.vx = 0;
+    this.player.vz = 0;
+    this.player.pitch = -0.2;
+    this.stomp.start(() => this.audio.stomp());
+  }
+
+  /** Сцена доиграна: сусло в рюкзак, игрок вылезает из чана. */
+  private finishStomp(): void {
+    const inv = this.state.inventory;
+    if (addItem(inv, 'must', 1) > 0) {
+      this.toasts.push('Сусло некуда налить', 'bad');
+      return;
+    }
+    this.audio.pickup();
+    this.toasts.push('Сусло: +1');
   }
 
   private cellarDialog(structure: PlacedStructure): DialogSpec {
@@ -2309,12 +2394,26 @@ export class Game {
   /** Сколько утоляет жажду. null — не пьют. */
   private static drinkValue(id: ItemId): number | null {
     if (id === 'water_clean') return SURVIVAL.drink.water_clean;
+    if (id === 'beer') return SURVIVAL.drink.beer;
     if (id === 'wine_young' || id === 'wine_aged' || id === 'wine_vintage') return SURVIVAL.drink.wine;
     return null;
   }
 
-  /** Общая часть: эффект от съеденного. Вещь к этому моменту уже списана. */
+  /**
+   * Общая часть: эффект от съеденного. Вещь к этому моменту уже списана,
+   * дальше проигрывается сцена, а сытость приходит с последним куском.
+   */
   private applyFood(id: ItemId, gain: number): void {
+    if (this.meal.active) return;
+    this.meal.start(
+      id,
+      ITEMS[id].name,
+      () => this.audio.bite(),
+      () => this.finishFood(id, gain),
+    );
+  }
+
+  private finishFood(id: ItemId, gain: number): void {
     this.player.hunger = clamp(this.player.hunger + gain, 0, SURVIVAL.max);
     this.audio.pickup();
     if (id === 'meat') {
@@ -2328,9 +2427,19 @@ export class Game {
   }
 
   private applyDrink(id: ItemId, gain: number): void {
+    if (this.meal.active) return;
+    this.meal.start(
+      id,
+      ITEMS[id].name,
+      () => this.audio.gulp(),
+      () => this.finishDrink(id, gain),
+    );
+  }
+
+  private finishDrink(id: ItemId, gain: number): void {
     this.player.thirst = clamp(this.player.thirst + gain, 0, SURVIVAL.max);
-    // Из-под воды остаётся пустая бутылка.
-    if (id === 'water_clean') addItem(this.state.inventory, 'bottle_empty', 1);
+    // Из-под воды и пива остаётся пустая бутылка.
+    if (id === 'water_clean' || id === 'beer') addItem(this.state.inventory, 'bottle_empty', 1);
     this.audio.pickup();
     this.toasts.push(`Выпил: ${ITEMS[id].name}`);
   }
@@ -2339,6 +2448,7 @@ export class Game {
   private eatFromSlot(): void {
     const inv = this.state.inventory;
     const stack = inv.food;
+    if (this.meal.active) return;
     if (!stack) {
       this.toasts.push('Ячейка еды пуста: положи туда еду в рюкзаке', 'bad');
       return;
@@ -2358,6 +2468,7 @@ export class Game {
   private drinkFromSlot(): void {
     const inv = this.state.inventory;
     const stack = inv.drink;
+    if (this.meal.active) return;
     if (!stack) {
       this.toasts.push('Ячейка питья пуста', 'bad');
       return;
