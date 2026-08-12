@@ -4,6 +4,8 @@ export class Input {
   private readonly pressed = new Set<string>();
   private dx = 0;
   private dy = 0;
+  /** Зажата ли левая кнопка: биноклю нужно именно удержание. */
+  private mouse = false;
   locked = false;
   onLockChange: ((locked: boolean) => void) | null = null;
 
@@ -23,6 +25,14 @@ export class Input {
       this.onLockChange?.(this.locked);
     });
 
+    window.addEventListener('mousedown', (e) => {
+      if (e.button === 0) this.mouse = true;
+    });
+    window.addEventListener('mouseup', (e) => {
+      if (e.button === 0) this.mouse = false;
+    });
+    window.addEventListener('blur', () => (this.mouse = false));
+
     this.canvas.addEventListener('mousemove', (e) => {
       if (!this.locked) return;
       this.dx += e.movementX;
@@ -32,6 +42,11 @@ export class Input {
 
   requestLock(): void {
     void this.canvas.requestPointerLock();
+  }
+
+  /** Зажата ли левая кнопка мыши прямо сейчас. */
+  isMouseDown(): boolean {
+    return this.mouse;
   }
 
   isDown(code: string): boolean {

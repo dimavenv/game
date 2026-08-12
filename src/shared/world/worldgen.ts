@@ -4,6 +4,7 @@ import {
   bridgePlatform,
   catamaranLayout,
   hutLayout,
+  gorgeWalls,
   mountainObstacles,
   stallLayout,
   type BoxCollider,
@@ -12,6 +13,7 @@ import {
   type HutLayout,
   type StallLayout,
 } from './buildings';
+import { caveWalls, cavePlatforms, generateCaves, type Cave } from './caves';
 import { ObstacleGrid, type Obstacle } from './grid';
 import { Terrain } from './terrain';
 
@@ -54,6 +56,8 @@ export interface WorldData {
   boxes: BoxCollider[];
   /** Настилы, по которым ходят поверх рельефа: пока только мост. */
   platforms: Platform[];
+  /** Пещеры: ходы с развилками, разбросанные по карте. */
+  caves: Cave[];
   obstacles: ObstacleGrid;
   /** Препятствия-стволы по индексу дерева: срубленное отключается здесь. */
   treeObstacles: Obstacle[];
@@ -209,6 +213,17 @@ export function generateWorld(seedInput: string | number): WorldData {
   for (const o of catamaran.obstacles) obstacles.add({ x: o.x, z: o.z, radius: o.radius, id: -1 });
   for (const o of mountainObstacles()) obstacles.add({ x: o.x, z: o.z, radius: o.radius, id: -1 });
 
+  // Пещеры: пол настилами, стены — обычными препятствиями.
+  const caves = generateCaves(toSeed(seed), terrain);
+  const cavePlatformList: Platform[] = [];
+  for (const cave of caves) {
+    cavePlatformList.push(...cavePlatforms(cave));
+    for (const w of caveWalls(cave)) obstacles.add({ x: w.x, z: w.z, radius: w.radius, id: -1 });
+  }
+
+  // Стены Дантова ущелья: наверх по ним не влезешь, ход только по дну.
+  for (const o of gorgeWalls()) obstacles.add({ x: o.x, z: o.z, radius: o.radius, id: -1 });
+
   return {
     seed,
     terrain,
@@ -228,7 +243,8 @@ export function generateWorld(seedInput: string | number): WorldData {
     stall,
     catamaran,
     boxes: [...hut.colliders, ...stall.colliders],
-    platforms: [bridgePlatform()],
+    caves,
+    platforms: [bridgePlatform(), ...cavePlatformList],
     obstacles,
     treeObstacles,
     spawn: { ...SPAWN },

@@ -31,6 +31,8 @@ export interface Inventory {
   hasShotgun: boolean;
   hasHammer: boolean;
   hasLighter: boolean;
+  /** Бинокль: награда за верно посчитанных дроздов. */
+  hasBinoculars: boolean;
   hasKnife: boolean;
 }
 
@@ -47,6 +49,7 @@ export function createInventory(money: number): Inventory {
     hasShotgun: false,
     hasHammer: false,
     hasLighter: false,
+    hasBinoculars: false,
     hasKnife: false,
   };
 }

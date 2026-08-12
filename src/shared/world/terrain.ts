@@ -1,5 +1,6 @@
-import { MOUNTAIN, RIVER, SWING, WORLD } from '../balance';
+import { GORGE, MOUNTAIN, RIVER, SWING, WORLD } from '../balance';
 import { ValueNoise, clamp, lerp, smoothstep, toSeed } from '../rng';
+import { ENTRY, caveHills, caveMouths, caveSites, type CaveSite } from './caves';
 
 /**
  * Русло Псекупса: ломаная от западного края карты вдоль подножия горы и на юг.
@@ -39,12 +40,107 @@ export class Terrain {
   private readonly detail: ValueNoise;
   /** Высота вершины: по ней ровняется площадка под беседку. */
   private readonly summitY: number;
+  /** Естественная высота склона в узлах ущелья — от неё режется дно. */
+  private readonly gorgeBase: number[];
+  /** Длины отрезков оси ущелья и общая длина: по ним считается глубина. */
+  private readonly gorgeSpan: number[];
+  private readonly gorgeLength: number;
+  /** Холмы, в которых спрятаны пещеры: их поднимает сам рельеф. */
+  private readonly hills: CaveSite[];
+  /** Зевы пещер и естественная высота склона в них: по ним режется вход. */
+  private readonly mouths: { x: number; z: number; yaw: number; base: number }[] = [];
 
   constructor(seed: string | number) {
     const s = toSeed(seed);
     this.noise = new ValueNoise(s);
     this.detail = new ValueNoise(s ^ 0x9e3779b9);
+    this.hills = caveSites(s);
     this.summitY = this.land(MOUNTAIN.x, MOUNTAIN.z) + this.mountain(MOUNTAIN.x, MOUNTAIN.z);
+
+    // Дно ущелья режется от нетронутого склона, поэтому его высоту в узлах
+    // считаем заранее: иначе получится рекурсия «высота внутри высоты».
+    this.gorgeBase = GORGE.path.map(([x, z]) => this.land(x, z) + this.mountain(x, z));
+    this.gorgeSpan = [];
+    let total = 0;
+    for (let i = 0; i < GORGE.path.length - 1; i++) {
+      const [ax, az] = GORGE.path[i];
+      const [bx, bz] = GORGE.path[i + 1];
+      const len = Math.hypot(bx - ax, bz - az);
+      this.gorgeSpan.push(len);
+      total += len;
+    }
+    this.gorgeLength = total;
+
+    // Вход в пещеру прорезается в склоне: без выемки зев остаётся под землёй.
+    this.mouths = caveMouths(s).map((m) => ({
+      ...m,
+      base: this.land(m.x, m.z) + this.mountain(m.x, m.z),
+    }));
+  }
+
+  /**
+   * Вход в пещеру: короткая просадка в склоне от зева наружу. Игрок сходит
+   * по ней вниз и оказывается ровно на полу первого зала.
+   */
+  private caveEntries(h: number, x: number, z: number): number {
+    let out = h;
+    for (const mouth of this.mouths) {
+      // Локальные координаты: ось Z наружу от зева.
+      const dx = x - mouth.x;
+      const dz = z - mouth.z;
+      const sin = Math.sin(mouth.yaw);
+      const cos = Math.cos(mouth.yaw);
+      const along = dx * sin + dz * cos;
+      const across = dx * cos - dz * sin;
+      if (along < -ENTRY.inward - ENTRY.rim || along > ENTRY.length + ENTRY.rim) continue;
+      if (Math.abs(across) > ENTRY.halfWidth + ENTRY.rim) continue;
+
+      // Внутри выемки дно ровное, наружу оно поднимается к склону. Дальше
+      // внутрь земля резко возвращается на место — это и есть зев пещеры.
+      const t = clamp(along / ENTRY.length, 0, 1);
+      const floor = mouth.base - ENTRY.drop * (1 - t * t);
+      const side = smoothstep(ENTRY.halfWidth, ENTRY.halfWidth + ENTRY.rim, Math.abs(across));
+      const outer = smoothstep(ENTRY.length, ENTRY.length + ENTRY.rim, along);
+      const inner = smoothstep(-ENTRY.inward, -ENTRY.inward - ENTRY.rim, along);
+      const blend = Math.max(side, Math.max(outer, inner));
+      out = Math.min(out, lerp(floor, out, blend));
+    }
+    return out;
+  }
+
+  /**
+   * Ущелье: узкая щель с отвесными стенами. У входа дно совпадает со
+   * склоном, дальше уходит вниз — заходишь по земле, а через десяток шагов
+   * над тобой уже стены.
+   */
+  private gorge(h: number, x: number, z: number): number {
+    // Грубая отсечка: щель занимает небольшой кусок западного склона.
+    if (x < -150 || x > -100 || z < 80 || z > 126) return h;
+
+    let bestDistance = Infinity;
+    let bestFloor = 0;
+    let travelled = 0;
+    for (let i = 0; i < GORGE.path.length - 1; i++) {
+      const [ax, az] = GORGE.path[i];
+      const [bx, bz] = GORGE.path[i + 1];
+      const dx = bx - ax;
+      const dz = bz - az;
+      const t = clamp(((x - ax) * dx + (z - az) * dz) / (dx * dx + dz * dz), 0, 1);
+      const d = Math.hypot(x - (ax + dx * t), z - (az + dz * t));
+      if (d < bestDistance) {
+        bestDistance = d;
+        // Насколько далеко от входа: у самого входа не режем вовсе.
+        const along = (travelled + this.gorgeSpan[i] * t) / this.gorgeLength;
+        const cut = GORGE.depth * smoothstep(0, 0.24, along);
+        bestFloor = lerp(this.gorgeBase[i], this.gorgeBase[i + 1], t) - cut;
+      }
+      travelled += this.gorgeSpan[i];
+    }
+
+    if (bestDistance > GORGE.halfWidth + GORGE.rim) return h;
+    // Внутри — ровное дно, наружу быстро выходим на естественный склон.
+    const blend = smoothstep(GORGE.halfWidth, GORGE.halfWidth + GORGE.rim, bestDistance);
+    return Math.min(h, lerp(bestFloor, h, blend));
   }
 
   /** Холмы без гор, рек и площадок — основа, от которой всё считается. */
@@ -54,7 +150,8 @@ export class Terrain {
       (this.noise.fbm(x * 0.011, z * 0.011, 4) - 0.5) * 3.6 +
       (this.detail.fbm(x * 0.055, z * 0.055, 2) - 0.5) * 0.9;
     const beach = smoothstep(WORLD.lakeHalf, WORLD.lakeHalf + 26, Terrain.lakeDistance(x, z));
-    return lerp(WORLD.shoreHeight, hills, beach);
+    // Бугры с пещерами: без них в ровном лесу ходу взяться неоткуда.
+    return lerp(WORLD.shoreHeight, hills + caveHills(this.hills, x, z), beach);
   }
 
   /** Расстояние по Чебышёву — из-за него озеро выходит идеально квадратным. */
@@ -139,8 +236,10 @@ export class Terrain {
       const flat = 1 - smoothstep(MOUNTAIN.gazeboRadius + 1.2, MOUNTAIN.gazeboRadius * 3, md);
       h = lerp(h, this.summitY, flat);
     }
-    // Полка под тарзанку врезается в склон, русло режется поверх всего.
+    // Полка под тарзанку и щель ущелья врезаются в склон, русло — поверх всего.
     h = this.shelf(h, x, z);
+    h = this.gorge(h, x, z);
+    h = this.caveEntries(h, x, z);
     h = this.river(h, x, z);
 
     // Поляна под хижину — ровная площадка.

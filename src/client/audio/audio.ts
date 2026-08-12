@@ -254,6 +254,14 @@ export class GameAudio {
     this.burst({ duration: 0.12, gain: 0.16, type: 'bandpass', freq: 900, freqTo: 300, q: 1.6 });
   }
 
+  /** Дрозд: короткая трель на две ноты. */
+  thrush(): void {
+    if (this.playSlot('animal_thrush', 0.4)) return;
+    this.blip(2100, 0.07, 0.035, 'sine');
+    window.setTimeout(() => this.blip(2700, 0.06, 0.03, 'sine'), 90);
+    window.setTimeout(() => this.blip(2300, 0.05, 0.025, 'sine'), 180);
+  }
+
   /** Босая нога по мезге: шлепок с брызгами. */
   stomp(): void {
     if (this.playSlot('stomp', 0.7)) return;

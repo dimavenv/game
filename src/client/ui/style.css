@@ -1114,3 +1114,50 @@ body {
 #cheat-gate input.bad {
   border-color: #d99b8a;
 }
+
+/* ── Карта ───────────────────────────────────────────────────────────────
+   Бумажная схема окрестностей: открывается на M, игрока на ней нет. */
+#mapscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 35;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(6, 8, 10, 0.78);
+}
+
+#mapscreen.hidden {
+  display: none;
+}
+
+.map-panel {
+  padding: 18px 20px 14px;
+  background: #efe4cb;
+  border: 1px solid rgba(74, 58, 38, 0.5);
+  border-radius: 2px;
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.6);
+  text-align: center;
+}
+
+.map-title {
+  margin-bottom: 12px;
+  font-size: 19px;
+  letter-spacing: 0.1em;
+  color: #4a3a26;
+}
+
+.map-canvas {
+  display: block;
+  width: min(72vh, 72vw);
+  height: min(72vh, 72vw);
+  border: 1px solid rgba(74, 58, 38, 0.45);
+  cursor: crosshair;
+  background: #dccfae;
+}
+
+.map-hint {
+  margin-top: 10px;
+  font-size: 13px;
+  color: rgba(74, 58, 38, 0.7);
+}

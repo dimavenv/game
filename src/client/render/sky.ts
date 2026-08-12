@@ -221,6 +221,8 @@ export class Sky {
   private readonly cB = new THREE.Color();
   /** На каком расстоянии держится источник света: зависит от кадра теней. */
   private readonly sunDistance: number;
+  /** Насколько игрок под землёй: 1 — дневного света нет вовсе. */
+  private caveDark = 0;
 
   constructor(
     private readonly scene: THREE.Scene,
@@ -310,6 +312,14 @@ export class Sky {
     return points;
   }
 
+  /**
+   * В пещере дневного света нет. Гасим солнце и рассеянный свет и придвигаем
+   * туман вплотную — без фонарика там и правда ничего не видно.
+   */
+  setCaveDark(amount: number): void {
+    this.caveDark = Math.max(0, Math.min(1, amount));
+  }
+
   update(t: number, dt: number, camera: THREE.Camera): void {
     this.uniforms.uTime.value += dt;
     let i = 0;
@@ -340,22 +350,24 @@ export class Sky {
     this.cB.setHex(b.sun);
     this.uniforms.sunColor.value.copy(this.cA).lerp(this.cB, u);
 
+    const daylight = 1 - this.caveDark;
     this.sun.color.copy(this.uniforms.sunColor.value);
-    this.sun.intensity = this.tmp.sunI;
+    this.sun.intensity = this.tmp.sunI * daylight;
     // Ночью тени выключаем: лунного света мало, а граница карты теней
     // читается уродливой полосой поперёк леса.
-    this.sun.castShadow = this.tmp.sunI > 0.45;
+    this.sun.castShadow = this.tmp.sunI > 0.45 && this.caveDark < 0.4;
 
     this.cA.setHex(a.amb);
     this.cB.setHex(b.amb);
     this.ambient.color.copy(this.cA).lerp(this.cB, u);
     this.ambient.groundColor.copy(this.ambient.color).multiplyScalar(0.55);
-    this.ambient.intensity = this.tmp.ambI;
+    // Под землёй остаётся только слабая подсветка, чтобы стены не были чернотой.
+    this.ambient.intensity = this.tmp.ambI * daylight + this.caveDark * 0.09;
 
     this.cA.setHex(a.fog);
     this.cB.setHex(b.fog);
-    this.fog.color.copy(this.cA).lerp(this.cB, u);
-    this.fog.density = this.tmp.fogD;
+    this.fog.color.copy(this.cA).lerp(this.cB, u).multiplyScalar(1 - this.caveDark * 0.92);
+    this.fog.density = this.tmp.fogD + this.caveDark * 0.055;
 
     const mat = this.stars.material as THREE.PointsMaterial;
     mat.opacity = this.tmp.stars;

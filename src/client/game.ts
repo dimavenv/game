@@ -3,6 +3,7 @@ import {
   APPLES,
   CAMPFIRE,
   CHOP,
+  GORGE,
   ECONOMY,
   ANIMALS,
   AVI,
@@ -109,6 +110,7 @@ import { Input } from './input';
 import { AxeItem } from './items/axe';
 import { HammerItem } from './items/hammer';
 import { KnifeItem } from './items/knife';
+import { Binoculars } from './items/binoculars';
 import { StompScene } from './items/stomp';
 import { Meal } from './items/meal';
 import { CigaretteItem } from './items/cigarette';
@@ -122,6 +124,10 @@ import { Forest, TREE_HEIGHT } from './render/forest';
 import { GroundCover } from './render/groundcover';
 import { buildAppleTree, buildMonument, ChopEffects, type AppleTreeHandle } from './render/nature';
 import { PLACED_MATERIALS, PRESS_FLOOR, PlacedStructures } from './render/placed';
+import { buildCave } from './render/caves';
+import { Thrushes } from './render/thrushes';
+import { MapScreen, type Landmark } from './ui/map';
+import { insideCave } from '../shared/world/caves';
 import { buildVine, buildWildVine, type VineHandle } from './render/vines';
 import { Sky } from './render/sky';
 import { Smoke } from './render/smoke';
@@ -160,7 +166,7 @@ const STEP_LENGTH = 1.75;
 /** Высота глаз, когда игрок сидит в кресле. */
 const SEAT_EYE = 1.12;
 
-type Slot = 1 | 2 | 3 | 4 | 5 | 6 | 7;
+type Slot = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
 
 /** Подпись быстрой ячейки: иконка и остаток. */
 function quickLabel(stack: ItemStack | null): string {
@@ -223,6 +229,14 @@ export class Game {
   private readonly gazebo: GazeboBuild;
   private readonly animals: Animal[];
   private readonly animalsView: AnimalsView;
+  private readonly thrushes: Thrushes;
+  private readonly mapScreen = new MapScreen();
+  /** Считает ли игрок дроздов прямо сейчас и был ли он в щели в прошлом кадре. */
+  private counting = false;
+  private inGorge = false;
+  private thrushVoice = 2;
+  /** Насколько темно вокруг: 1 — глубоко в пещере. */
+  private caveDark = 0;
   private animalVoiceTimer = 3;
   private readonly swingRig: SwingBuild;
   private readonly ropeSwing: RopeSwing;
@@ -240,6 +254,7 @@ export class Game {
   private readonly shotgun: ShotgunItem;
   private readonly hammer: HammerItem;
   private readonly knife: KnifeItem;
+  private readonly binoculars: Binoculars;
   private readonly stomp: StompScene;
   private readonly meal: Meal;
   private readonly drugKit: DrugKit;
@@ -361,7 +376,25 @@ export class Game {
       ),
     );
 
+    // Табличка у входа в Дантово ущелье.
+    this.scene.add(
+      buildSign(
+        ['ДАНТОВО', 'УЩЕЛЬЕ'],
+        GORGE.sign.x,
+        terrain.height(GORGE.sign.x, GORGE.sign.z),
+        GORGE.sign.z,
+        Math.atan2(GORGE.path[0][0] - GORGE.sign.x, GORGE.path[0][1] - GORGE.sign.z),
+      ),
+    );
+
     this.scene.add(buildBridge(terrain));
+
+    // Пещеры: по одной склейке на каждую, всё остальное — рельеф и стены.
+    for (const cave of this.world.caves) this.scene.add(buildCave(cave));
+
+    // Дрозды живут только в ущелье, поэтому их немного и они всегда там.
+    this.thrushes = new Thrushes(terrain);
+    this.scene.add(this.thrushes.group);
 
     // Звери заводятся один раз на партию и дальше живут сами.
     this.animals = spawnAnimals(this.rng, this.world);
@@ -443,6 +476,7 @@ export class Game {
     this.shotgun = new ShotgunItem(this.camera);
     this.hammer = new HammerItem(this.camera);
     this.knife = new KnifeItem(this.camera);
+    this.binoculars = new Binoculars(this.camera);
     this.stomp = new StompScene(this.camera);
     this.meal = new Meal(this.camera);
     this.drugKit = new DrugKit(this.camera, this.audio, this.smoke);
@@ -495,7 +529,15 @@ export class Game {
       }
       this.running = false;
       // Выход из захвата ради диалога, рюкзака или ожидания клика — не пауза.
-      if (this.dialog.isOpen || this.inventoryScreen.isOpen || this.cheatMenu.isOpen || this.pendingLock) return;
+      if (
+        this.dialog.isOpen ||
+        this.inventoryScreen.isOpen ||
+        this.cheatMenu.isOpen ||
+        this.mapScreen.isOpen ||
+        this.pendingLock
+      ) {
+        return;
+      }
       this.hud.setVisible(false);
       this.onPause?.();
     };
@@ -506,7 +548,15 @@ export class Game {
       if (this.pendingLock) this.hud.setResume(true);
     });
     window.addEventListener('mousedown', () => {
-      if (!this.pendingLock || this.dialog.isOpen || this.inventoryScreen.isOpen || this.cheatMenu.isOpen) return;
+      if (
+        !this.pendingLock ||
+        this.dialog.isOpen ||
+        this.inventoryScreen.isOpen ||
+        this.cheatMenu.isOpen ||
+        this.mapScreen.isOpen
+      ) {
+        return;
+      }
       this.input.requestLock();
     });
 
@@ -514,6 +564,13 @@ export class Game {
       if (e.code === 'Backquote' && CheatMenu.unlocked && !this.dialog.isOpen) {
         e.preventDefault();
         this.openCheats();
+      }
+      if ((e.code === 'Escape' || e.code === 'KeyM') && this.mapScreen.isOpen) {
+        e.preventDefault();
+        this.mapScreen.close();
+      } else if (e.code === 'KeyM' && this.running && !this.dialog.isOpen && !this.inventoryScreen.isOpen) {
+        e.preventDefault();
+        this.openMap();
       }
       if (e.code === 'Escape' && this.cheatMenu.isOpen) this.cheatMenu.close();
       if (e.code === 'Escape' && this.dialog.isOpen) this.dialog.close();
@@ -533,7 +590,15 @@ export class Game {
 
     if (import.meta.env.DEV) {
       // Доступ к сцене из консоли — только в режиме разработки.
-      (window as unknown as { game: Game }).game = this;
+      const w = window as unknown as {
+        game: Game;
+        __step: typeof stepPlayer;
+        __insideCave: typeof insideCave;
+      };
+      w.game = this;
+      // Шаг симуляции и проверка «внутри пещеры» — для отладочных прогонов.
+      w.__step = stepPlayer;
+      w.__insideCave = insideCave;
     }
 
     // Все обычные материалы сцены получают сезонный оттенок и снег.
@@ -615,6 +680,7 @@ export class Game {
     if (this.axe.update(dt)) this.applyAxeHit();
     if (this.hammer.update(dt)) this.applyHammerHit();
     this.knife.update(dt);
+    this.binoculars.update(dt, this.slot === 8 && this.input.isMouseDown());
     if (this.stomp.update(dt)) this.finishStomp();
     this.meal.update(dt);
     if (this.shotgun.update(dt) === 'reload-done') this.finishReload();
@@ -697,6 +763,8 @@ export class Game {
     }
 
     this.updateAnimals(dt);
+    this.updateGorge(dt);
+    this.updateCaveLight(dt);
     this.updateFilters(dt * scale);
     this.updateCampfires(dt * scale);
     this.updateSurvival(dt * scale);
@@ -727,6 +795,7 @@ export class Game {
       this.shotgun.setVisible(false);
       this.hammer.setVisible(false);
       this.knife.setVisible(false);
+      this.binoculars.setVisible(false);
       this.flashlight.intensity = 0;
       return;
     }
@@ -748,6 +817,7 @@ export class Game {
     if (this.input.wasPressed('Digit5')) pick(5, inv.hasFlashlight, 'Фонарика нет — у Томера 150 ₪');
     if (this.input.wasPressed('Digit6')) pick(6, inv.hasHammer, 'Молота нет — у Томера 280 ₪');
     if (this.input.wasPressed('Digit7')) pick(7, inv.hasKnife, 'Ножа нет — у Томера 120 ₪');
+    if (this.input.wasPressed('Digit8')) pick(8, inv.hasBinoculars, 'Бинокля нет — его дают за дроздов');
     if (this.input.wasPressed('Tab')) this.openBackpack();
     if (this.input.wasPressed('KeyB')) this.toggleBuildMode();
     if (this.input.wasPressed('KeyR') && this.slot === 3) this.reloadShotgun();
@@ -761,6 +831,7 @@ export class Game {
     this.shotgun.setVisible(this.slot === 3 && inv.hasShotgun);
     this.hammer.setVisible(this.slot === 6 && inv.hasHammer);
     this.knife.setVisible(this.slot === 7 && inv.hasKnife);
+    this.binoculars.setVisible(this.slot === 8 && inv.hasBinoculars);
     if (this.buildMode && this.slot !== 6) this.setBuildMode(false);
     this.flashlight.intensity = this.slot === 5 && inv.hasFlashlight ? 10 : 0;
   }
@@ -1185,6 +1256,7 @@ export class Game {
       this.cigarette.fovOffset +
       drugFov(this.state.effects) +
       this.drugKit.fov +
+      this.binoculars.fov +
       (this.player.sprinting ? 3.5 : 0);
     this.camera.fov += (targetFov - this.camera.fov) * Math.min(1, 6 * dt);
     this.camera.updateProjectionMatrix();
@@ -1317,6 +1389,7 @@ export class Game {
     if (this.slot === 6) return 'ЛКМ — разбить валун · B — стройка';
     if (this.slot === 3) return this.shotgun.hint(countItem(this.state.inventory, 'shells'));
     if (this.slot === 2) return this.zombies.length > 0 ? 'ЛКМ — бить' : 'ЛКМ — рубить';
+    if (this.slot === 8) return 'ЛКМ — смотреть в бинокль';
     if (this.slot === 1) return this.cigarette.hint();
     return '';
   }
@@ -2595,6 +2668,153 @@ export class Game {
     this.applyDrink(id, gain);
   }
 
+  /**
+   * Карта на M. Игрока на ней нет — только рельеф и ориентиры; метки ставит
+   * тот, у кого в руках молот.
+   */
+  private openMap(): void {
+    if (this.mapScreen.isOpen) {
+      this.mapScreen.close();
+      return;
+    }
+    document.exitPointerLock();
+    const landmarks: Landmark[] = [
+      { x: this.world.hut.x, z: this.world.hut.z, label: 'Хижина', kind: 'hut' },
+      { x: WORLD.sign.x, z: WORLD.sign.z, label: 'Круглое озеро', kind: 'water' },
+      { x: WORLD.monument.x, z: WORLD.monument.z, label: 'Серёга Пират', kind: 'sign' },
+      { x: MOUNTAIN.x, z: MOUNTAIN.z, label: 'Гора Петушок', kind: 'peak' },
+      { x: SWING.base.x, z: SWING.base.z, label: 'Тарзанка', kind: 'sign' },
+      { x: GORGE.sign.x, z: GORGE.sign.z, label: 'Дантово ущелье', kind: 'gorge' },
+      { x: RIVER.sign.x, z: RIVER.sign.z, label: 'Псекупс', kind: 'water' },
+      { x: BRIDGE.x, z: BRIDGE.z, label: 'Мост', kind: 'bridge' },
+      { x: WORLD.catamaran.x, z: WORLD.catamaran.z, label: 'Катамаран', kind: 'water' },
+      ...this.world.caves.map((cave, i) => ({
+        x: cave.mouth.x,
+        z: cave.mouth.z,
+        label: `Пещера ${i + 1}`,
+        kind: 'cave' as const,
+      })),
+    ];
+    this.mapScreen.open(
+      this.world.terrain,
+      landmarks,
+      this.state.world.markers,
+      this.state.inventory.hasHammer,
+      () => this.resumeAfterUi(),
+    );
+  }
+
+  /** Внутри ли игрок в щели ущелья: по этому и заводится счёт дроздов. */
+  private gorgeInside(): boolean {
+    const path = GORGE.path;
+    for (let i = 0; i < path.length - 1; i++) {
+      const [ax, az] = path[i];
+      const [bx, bz] = path[i + 1];
+      const dx = bx - ax;
+      const dz = bz - az;
+      const denominator = dx * dx + dz * dz || 1;
+      const t = clamp(((this.player.x - ax) * dx + (this.player.z - az) * dz) / denominator, 0, 1);
+      const d = Math.hypot(this.player.x - (ax + dx * t), this.player.z - (az + dz * t));
+      if (d < GORGE.halfWidth + 1.4) return true;
+    }
+    return false;
+  }
+
+  /**
+   * Дантово ущелье. Зашёл — считай дроздов, вышел — говори число. Птицы
+   * пересаживаются каждый день, так что запомнить ответ не выйдет.
+   */
+  private updateGorge(dt: number): void {
+    const inside = this.gorgeInside();
+    if (inside) {
+      this.thrushes.update(dt, this.clock.day, this.rng);
+      // Голоса: без них считать птиц по одной картинке скучно.
+      this.thrushVoice -= dt;
+      if (this.thrushVoice <= 0) {
+        this.thrushVoice = 1.6 + this.rng() * 3.4;
+        this.audio.thrush();
+      }
+    }
+
+    if (inside && !this.inGorge) {
+      if (this.state.world.thrushDay !== this.clock.day) {
+        this.counting = true;
+        this.toasts.push('Дантово ущелье. Считай дроздов — на выходе спросят');
+      } else {
+        this.toasts.push('Сегодня дроздов ты уже считал');
+      }
+    }
+    if (!inside && this.inGorge && this.counting) {
+      this.counting = false;
+      this.askThrushes();
+    }
+    this.inGorge = inside;
+  }
+
+  /** Опрос на выходе: крутим число и отвечаем. */
+  private askThrushes(): void {
+    let answer = Thrushes.countFor(this.clock.day) > 8 ? 9 : 6;
+    const truth = Thrushes.countFor(this.clock.day);
+    const spec = (): DialogSpec => ({
+      title: 'Дантово ущелье',
+      speech: 'Ну и сколько же там было дроздов?',
+      actions: [
+        { id: 'less', label: '− 1', note: '', disabled: answer <= 0 },
+        { id: 'more', label: '+ 1', note: '', disabled: answer >= 30 },
+        { id: 'say', label: `Ответить: ${answer}`, note: '', disabled: false },
+        { id: 'leave', label: 'Промолчать', note: '', disabled: false },
+      ],
+      footer: `Считать заново можно завтра`,
+    });
+
+    this.openDialog(spec, (id) => {
+      if (id === 'less') {
+        answer = Math.max(0, answer - 1);
+        return false;
+      }
+      if (id === 'more') {
+        answer = Math.min(30, answer + 1);
+        return false;
+      }
+      if (id === 'say') {
+        this.state.world.thrushDay = this.clock.day;
+        if (answer === truth) this.rewardThrushes(truth);
+        else {
+          this.toasts.push(`Не сходится. Их было ${truth}`, 'bad');
+          this.audio.pickup();
+        }
+        return true;
+      }
+      return true;
+    });
+  }
+
+  private rewardThrushes(count: number): void {
+    const inv = this.state.inventory;
+    inv.money += GORGE.reward;
+    this.audio.coins();
+    if (!inv.hasBinoculars) {
+      inv.hasBinoculars = true;
+      this.toasts.push(`Ровно ${count}. Держи бинокль и ${GORGE.reward} ₪`, 'money');
+      return;
+    }
+    this.toasts.push(`Ровно ${count}. +${GORGE.reward} ₪`, 'money');
+  }
+
+  /** В пещере темно: дневной свет гаснет, а туман придвигается вплотную. */
+  private updateCaveLight(dt: number): void {
+    let inside = false;
+    for (const cave of this.world.caves) {
+      if (insideCave(cave, this.player.x, this.player.z)) {
+        inside = true;
+        break;
+      }
+    }
+    // Плавно, иначе на входе свет щёлкает.
+    this.caveDark += (Number(inside) - this.caveDark) * Math.min(1, dt * 2.2);
+    this.sky.setCaveDark(this.caveDark);
+  }
+
   /** Стадо: шаг поведения, голоса и удары кабана. */
   private updateAnimals(dt: number): void {
     const hit = stepAnimals(this.animals, this.player, this.world, dt, this.rng);
@@ -2875,6 +3095,7 @@ export class Game {
         5: inv.hasFlashlight,
         6: inv.hasHammer,
         7: inv.hasKnife,
+        8: inv.hasBinoculars,
       },
       {
         1: String(countItem(inv, 'cigarettes')),
@@ -2883,6 +3104,7 @@ export class Game {
         5: '',
         6: '',
         7: '',
+        8: '',
       },
     );
     this.hud.setHealth(this.player.health / PLAYER.maxHealth, this.hurtFlash, this.dying);

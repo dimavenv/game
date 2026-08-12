@@ -50,6 +50,7 @@ export const SOUND_SLOTS: SlotSpec[] = [
   { name: 'animal_deer', description: 'Косуля вскрикивает' },
   { name: 'animal_duck', description: 'Утка крякает' },
   { name: 'animal_hare', description: 'Заяц ломится через траву' },
+  { name: 'animal_thrush', description: 'Дрозд в Дантовом ущелье' },
 ];
 
 const EXTENSIONS = ['mp3', 'ogg', 'wav'];
