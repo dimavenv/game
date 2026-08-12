@@ -37,6 +37,8 @@ export const SOUND_SLOTS: SlotSpec[] = [
   { name: 'zombie_notice', description: 'Зомби заметил игрока' },
   { name: 'zombie_die', description: 'Зомби упокоен' },
   { name: 'chop', description: 'Удар топором по стволу' },
+  { name: 'butcher', description: 'Разделка туши ножом' },
+  { name: 'hero_butcher', description: 'Герой закончил разделывать тушу' },
   { name: 'shotgun', description: 'Выстрел из дробовика' },
   { name: 'night_start', description: 'Наступила ночь' },
   { name: 'door_creak', description: 'Дверь хижины открывается или закрывается' },

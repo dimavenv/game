@@ -254,6 +254,12 @@ export class GameAudio {
     this.burst({ duration: 0.12, gain: 0.16, type: 'bandpass', freq: 900, freqTo: 300, q: 1.6 });
   }
 
+  /** Нож по туше: влажный протяжный шорох, идёт всё время разделки. */
+  butcher(): void {
+    if (this.playSlot('butcher', 0.5)) return;
+    this.burst({ duration: 0.55, attack: 0.12, gain: 0.09, type: 'bandpass', freq: 700, freqTo: 240, q: 1.1 });
+  }
+
   /** Дерево валится: долгий треск и глухой удар о землю. */
   treeFall(): void {
     this.burst({ duration: 1.1, attack: 0.25, gain: 0.12, type: 'bandpass', freq: 1800, freqTo: 500, q: 0.9 });

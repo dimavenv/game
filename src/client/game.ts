@@ -63,7 +63,16 @@ import {
   type ItemStack,
 } from '../shared/inventory';
 import { CRAFT, SEASONS, SURVIVAL } from '../shared/balance';
-import { SEASON_NAME, chill, lakeFrozen, seasonOf, seasonTint, snowAmount, temperature } from '../shared/season';
+import {
+  SEASON_NAME,
+  autumnAmount,
+  chill,
+  lakeFrozen,
+  seasonOf,
+  seasonTint,
+  snowAmount,
+  temperature,
+} from '../shared/season';
 import { createPlayerState, stepPlayer, type PlayerState } from '../shared/movement';
 import { questProgress } from '../shared/quests';
 import { clamp, mulberry32, smoothstep } from '../shared/rng';
@@ -155,6 +164,9 @@ interface Chore {
   label: string;
   time: number;
   total: number;
+  /** Что подать голосом, пока дело идёт, и как часто. */
+  loop?: { play: () => void; every: number };
+  next?: number;
   done: () => void;
 }
 
@@ -1106,7 +1118,8 @@ export class Game {
     this.world.terrain.frozen = lakeFrozen(day, t);
     const snow = snowAmount(day, t);
     const tint = seasonTint(day, t);
-    this.season.set(snow, tint);
+    // Осенью зелень уходит в золото, но не под снегом.
+    this.season.set(snow, tint, autumnAmount(day, t) * 0.62 * (1 - snow));
     // Лёд встаёт не мгновенно: корка нарастает вместе со снегом.
     this.water.setIce(clamp((snow - SEASONS.freezeAt) * 3, 0, 1));
     this.river.setIce(clamp((snow - SEASONS.freezeAt - 0.15) * 3, 0, 1));
@@ -2257,6 +2270,8 @@ export class Game {
       label: 'Жаришь мясо',
       time: CRAFT.cookTime,
       total: CRAFT.cookTime,
+      loop: { play: () => this.audio.stoke(), every: 1.6 },
+      next: 1.6,
       done: () => {
         if (addItem(inv, 'meat_cooked', 1) > 0) {
           this.toasts.push('Жареное мясо некуда положить', 'bad');
@@ -2272,12 +2287,18 @@ export class Game {
   /** Берег: отсюда набирают мутную воду в пустую бутылку. */
   private waterSpot(): Target | null {
     const terrain = this.world.terrain;
-    // Смотрим на пару метров вперёд: до воды нужно дойти, а не тянуться.
-    const reach = 2.2;
-    const x = this.player.x - Math.sin(this.player.yaw) * reach;
-    const z = this.player.z - Math.cos(this.player.yaw) * reach;
-    if (terrain.surface(x, z) !== 'water') return null;
-    if (terrain.depth(x, z) < 0.15) return null;
+    // Щупаем перед собой несколько точек: у самого берега вода мелкая, и с
+    // одной пробы легко промахнуться мимо неё.
+    let reach: number | null = null;
+    for (const d of [0.8, 1.6, 2.4, 3.2, 4]) {
+      const x = this.player.x - Math.sin(this.player.yaw) * d;
+      const z = this.player.z - Math.cos(this.player.yaw) * d;
+      if (terrain.surface(x, z) !== 'water') continue;
+      if (terrain.depth(x, z) < 0.1) continue;
+      reach = d;
+      break;
+    }
+    if (reach === null) return null;
     const inv = this.state.inventory;
     return {
       kind: 'water',
@@ -2298,10 +2319,13 @@ export class Game {
     }
     this.slot = 7;
     this.knife.setCutting(true);
+    this.audio.butcher();
     this.chore = {
       label: `Разделываешь: ${ANIMAL_NAME[animal.kind]}`,
       time: CRAFT.butcherTime,
       total: CRAFT.butcherTime,
+      loop: { play: () => this.audio.butcher(), every: 0.6 },
+      next: 0.6,
       done: () => this.finishButcher(animal),
     };
   }
@@ -2317,6 +2341,7 @@ export class Game {
     if (meat - meatLeft > 0) parts.push(`мясо +${meat - meatLeft}`);
     if (hides - hideLeft > 0) parts.push(`шкура +${hides - hideLeft}`);
     this.audio.pickup();
+    this.audio.playSlot('hero_butcher');
     this.toasts.push(
       parts.length > 0 ? `Разделал: ${parts.join(', ')}` : 'В рюкзаке нет места',
       parts.length > 0 ? 'normal' : 'bad',
@@ -2352,6 +2377,13 @@ export class Game {
       return;
     }
     chore.time -= dt;
+    if (chore.loop) {
+      chore.next = (chore.next ?? chore.loop.every) - dt;
+      if (chore.next <= 0) {
+        chore.next = chore.loop.every;
+        chore.loop.play();
+      }
+    }
     if (chore.time > 0) return;
     this.chore = null;
     this.knife.setCutting(false);

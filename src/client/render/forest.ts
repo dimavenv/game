@@ -29,26 +29,92 @@ function tint(geo: THREE.BufferGeometry, hex: number): THREE.BufferGeometry {
   return geo;
 }
 
-function trunk(rTop: number, rBottom: number, h: number, hex: number, y: number): THREE.BufferGeometry {
-  const g = new THREE.CylinderGeometry(rTop, rBottom, h, 6, 1);
+/**
+ * Смещает вершины по хешу их же координат. Одинаковые точки уезжают
+ * одинаково, поэтому геометрия не рвётся, а кроны и стволы перестают быть
+ * идеально симметричными — лес сразу выглядит выросшим, а не отштампованным.
+ */
+function jitter(geo: THREE.BufferGeometry, amount: number, seed = 0): THREE.BufferGeometry {
+  const pos = geo.attributes.position as THREE.BufferAttribute;
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i);
+    const y = pos.getY(i);
+    const z = pos.getZ(i);
+    // Ось Y трогаем слабее: иначе ярусы кроны разъезжаются по высоте.
+    const k = Math.round(x * 40) * 3.1 + Math.round(y * 40) * 7.7 + Math.round(z * 40) * 5.3 + seed * 91.7;
+    pos.setXYZ(
+      i,
+      x + (hash(k) - 0.5) * amount * 2,
+      y + (hash(k + 17.3) - 0.5) * amount,
+      z + (hash(k + 41.9) - 0.5) * amount * 2,
+    );
+  }
+  geo.computeVertexNormals();
+  return geo;
+}
+
+function hash(n: number): number {
+  const s = Math.sin(n * 12.9898) * 43758.5453;
+  return s - Math.floor(s);
+}
+
+/** Ствол с комлем: снизу шире, чем сверху, как у выросшего дерева. */
+function trunk(rTop: number, rBottom: number, h: number, hex: number, y: number, seed = 0): THREE.BufferGeometry {
+  const g = new THREE.CylinderGeometry(rTop, rBottom, h, 7, 3);
   g.translate(0, y + h / 2, 0);
+  // Комлевое утолщение: нижние кольца раздаём наружу.
+  const pos = g.attributes.position as THREE.BufferAttribute;
+  for (let i = 0; i < pos.count; i++) {
+    const py = pos.getY(i);
+    const flare = Math.max(0, 1 - (py - y) / (h * 0.16));
+    if (flare <= 0) continue;
+    pos.setX(i, pos.getX(i) * (1 + flare * 0.5));
+    pos.setZ(i, pos.getZ(i) * (1 + flare * 0.5));
+  }
+  return tint(jitter(g, 0.02, seed), hex);
+}
+
+/** Сук: конус от ствола наружу и вверх. */
+function branch(
+  length: number,
+  radius: number,
+  y: number,
+  azimuth: number,
+  lift: number,
+  hex: number,
+): THREE.BufferGeometry {
+  const g = new THREE.CylinderGeometry(radius * 0.35, radius, length, 5, 1);
+  g.translate(0, length / 2, 0);
+  g.rotateZ(lift);
+  g.rotateY(azimuth);
+  g.translate(0, y, 0);
   return tint(g, hex);
 }
 
-function blob(r: number, hex: number, x: number, y: number, z: number, squash = 0.85): THREE.BufferGeometry {
-  const g = new THREE.IcosahedronGeometry(r, 0);
+function blob(
+  r: number,
+  hex: number,
+  x: number,
+  y: number,
+  z: number,
+  squash = 0.85,
+  detail = 1,
+): THREE.BufferGeometry {
+  // detail = 1 даёт 80 граней: комок хвои выглядит комком, а не булыжником.
+  const g = new THREE.IcosahedronGeometry(r, detail);
   g.scale(1, squash, 1);
   g.translate(x, y, z);
   return tint(g, hex);
 }
 
 /**
- * Красит геометрию градиентом по высоте. Крона, у которой низ темнее верха,
- * читается объёмной даже при плоском затенении — это самый дешёвый способ
- * увести лес от вида «конусы на палках».
+ * Красит геометрию градиентом по высоте, попутно чуть меняя тон каждой грани.
+ * Крона, у которой низ темнее верха, читается объёмной даже при плоском
+ * затенении, а разнобой по граням убирает пластиковую гладкость.
  */
 function gradient(geo: THREE.BufferGeometry, bottomHex: number, topHex: number): THREE.BufferGeometry {
-  const pos = geo.attributes.position as THREE.BufferAttribute;
+  const flat = geo.index ? geo.toNonIndexed() : geo;
+  const pos = flat.attributes.position as THREE.BufferAttribute;
   let min = Infinity;
   let max = -Infinity;
   for (let i = 0; i < pos.count; i++) {
@@ -63,85 +129,116 @@ function gradient(geo: THREE.BufferGeometry, bottomHex: number, topHex: number):
   const c = new THREE.Color();
   for (let i = 0; i < pos.count; i++) {
     c.copy(a).lerp(b, (pos.getY(i) - min) / span);
-    arr[i * 3] = c.r;
-    arr[i * 3 + 1] = c.g;
-    arr[i * 3 + 2] = c.b;
+    // Пятнистость по граням: три вершины треугольника берут один множитель.
+    const k = 0.88 + hash(Math.floor(i / 3) * 1.7 + min) * 0.26;
+    arr[i * 3] = c.r * k;
+    arr[i * 3 + 1] = c.g * k;
+    arr[i * 3 + 2] = c.b * k;
   }
-  geo.setAttribute('color', new THREE.BufferAttribute(arr, 3));
-  return geo;
+  flat.setAttribute('color', new THREE.BufferAttribute(arr, 3));
+  return flat;
 }
 
 /** Лапа ели: приплюснутый конус, слегка повёрнутый и сдвинутый от оси. */
-function tier(r: number, h: number, y: number, turn: number, lean: number): THREE.BufferGeometry {
-  const g = new THREE.ConeGeometry(r, h, 9, 1);
+function tier(r: number, h: number, y: number, turn: number, lean: number, seed: number): THREE.BufferGeometry {
+  const g = new THREE.ConeGeometry(r, h, 9, 2);
   g.scale(1, 1, 1 + lean * 0.12);
   g.rotateY(turn);
   g.translate(Math.sin(turn) * lean, y + h / 2, Math.cos(turn) * lean);
-  return g;
+  // Рваный край лап: без него ель — просто стопка конусов.
+  return jitter(g, r * 0.09, seed + turn);
 }
 
-function spruceGeometry(): THREE.BufferGeometry {
-  const parts: THREE.BufferGeometry[] = [trunk(0.1, 0.24, 3.6, 0x4a3a2c, 0)];
-  const layers = 7;
+/** Ель: ярусы лап от земли до макушки и тонкий шпиль. */
+function spruceGeometry(seed: number): THREE.BufferGeometry {
+  const dark = seed % 2 === 0 ? 0x223d1e : 0x1e3a22;
+  const parts: THREE.BufferGeometry[] = [trunk(0.09, 0.26, 3.6, 0x4a3a2c, 0, seed)];
+  const layers = 9 + (seed % 2);
   for (let i = 0; i < layers; i++) {
     const t = i / (layers - 1);
-    const r = 2.0 * (1 - t * 0.82);
-    const h = 1.7 - t * 0.55;
-    const y = 1.05 + i * 0.76;
-    parts.push(gradient(tier(r, h, y, i * 1.31, 0.06 + t * 0.05), 0x223d1e, 0x44693a));
+    const r = (1.9 + hash(seed * 3 + i) * 0.35) * (1 - t * 0.86);
+    const h = 1.5 - t * 0.45;
+    const y = 0.75 + i * 0.62;
+    parts.push(gradient(tier(r, h, y, i * 1.31 + seed, 0.05 + t * 0.06, seed), dark, 0x4a7040));
   }
+  // Шпиль: у ели он всегда тоньше последнего яруса.
+  const top = new THREE.ConeGeometry(0.28, 1.1, 7, 1);
+  top.translate(0, 0.75 + layers * 0.62 + 0.2, 0);
+  parts.push(gradient(top, 0x2c4a26, 0x547a45));
   return merge(parts);
 }
 
-function pineGeometry(): THREE.BufferGeometry {
-  const parts: THREE.BufferGeometry[] = [trunk(0.15, 0.32, 7.4, 0x63472f, 0)];
-  // Сосна: голый ствол и раскидистая шапка из приплюснутых ярусов.
-  const tiers: [number, number, number][] = [
-    [2.4, 1.5, 5.9],
-    [2.05, 1.4, 6.9],
-    [1.35, 1.3, 7.8],
+/** Сосна: голый ствол, сучья и раскидистая неровная шапка. */
+function pineGeometry(seed: number): THREE.BufferGeometry {
+  const bark = 0x63472f;
+  const parts: THREE.BufferGeometry[] = [trunk(0.14, 0.34, 7.6, bark, 0, seed)];
+  // Сухие сучья на голой части ствола: по ним сосна и узнаётся.
+  for (let i = 0; i < 3; i++) {
+    const y = 3.4 + i * 1.15;
+    parts.push(branch(0.9 + hash(seed + i) * 0.5, 0.06, y, i * 2.3 + seed, 0.9, bark));
+  }
+  // Шапка: комки хвои разного размера, а не один ровный конус.
+  const clumps: [number, number, number, number][] = [
+    [1.5, 0, 6.4, 0],
+    [1.25, 1.3, 6.15, 0.3],
+    [1.2, -1.2, 6.3, -0.45],
+    [1.15, 0.3, 6.2, -1.3],
+    [1.2, -0.25, 6.35, 1.25],
+    [1.05, 0.95, 6.9, 0.95],
+    [1.0, -0.9, 7.0, -0.9],
+    [1.4, 0.15, 7.35, 0.05],
+    [1.0, 0.9, 7.7, -0.5],
+    [0.9, -0.85, 7.8, 0.5],
+    [0.8, 0.1, 8.25, 0.2],
+    [0.7, -0.35, 8.1, -0.6],
   ];
-  for (const [r, h, y] of tiers) {
-    const g = new THREE.ConeGeometry(r, h, 10, 1);
-    g.scale(1, 0.72, 1);
-    g.translate(0, y + h / 2, 0);
-    parts.push(gradient(g, 0x33512c, 0x5b8347));
+  for (const [r, dx, dy, dz] of clumps) {
+    const k = 1 + (hash(seed * 7 + dx + dz) - 0.5) * 0.3;
+    parts.push(gradient(jitter(blob(r * k, 0, dx, dy, dz, 0.72), r * 0.15, seed), 0x2b4524, 0x628c4a));
   }
-  parts.push(gradient(blob(0.85, 0, 0.95, 7.0, 0.5, 0.62), 0x2f4a28, 0x4e733d));
-  parts.push(gradient(blob(0.7, 0, -1.0, 6.6, -0.4, 0.62), 0x2f4a28, 0x4e733d));
   return merge(parts);
 }
 
-function birchGeometry(): THREE.BufferGeometry {
-  const parts: THREE.BufferGeometry[] = [trunk(0.11, 0.17, 5.6, 0xdedad0, 0)];
+/** Берёза: белый ствол со штрихами, тонкие ветки и лёгкая крона. */
+function birchGeometry(seed: number): THREE.BufferGeometry {
+  const bark = 0xdedad0;
+  const parts: THREE.BufferGeometry[] = [trunk(0.1, 0.19, 5.8, bark, 0, seed)];
   // Чёрные штрихи на бересте: без них ствол выглядит пластиковой трубой.
-  for (let i = 0; i < 7; i++) {
-    const y = 0.5 + i * 0.68;
-    const a = i * 2.4;
-    const dash = new THREE.BoxGeometry(0.13, 0.05, 0.03);
+  for (let i = 0; i < 9; i++) {
+    const y = 0.4 + i * 0.6;
+    const a = i * 2.4 + seed;
+    const dash = new THREE.BoxGeometry(0.11 + hash(seed + i) * 0.09, 0.045, 0.03);
     dash.rotateY(a);
     dash.translate(Math.sin(a) * 0.15, y, Math.cos(a) * 0.15);
     parts.push(tint(dash, 0x2b2823));
   }
+  // Ветки уходят вверх — у берёзы они не торчат в стороны.
+  for (let i = 0; i < 4; i++) {
+    const y = 4.3 + i * 0.45;
+    parts.push(branch(1.1 + hash(seed * 5 + i) * 0.6, 0.045, y, i * 1.9 + seed, 0.55, bark));
+  }
   const canopy: [number, number, number, number][] = [
-    [1.75, 0, 6.1, 0],
-    [1.25, 0.95, 5.35, 0.45],
-    [1.1, -0.85, 5.6, -0.6],
-    [1.0, 0.25, 7.0, -0.5],
-    [0.85, -0.5, 6.6, 0.8],
+    [1.35, 0, 6.3, 0],
+    [1.0, 1.0, 5.7, 0.4],
+    [0.95, -0.9, 5.9, -0.55],
+    [0.9, 0.3, 7.1, -0.45],
+    [0.8, -0.45, 6.9, 0.75],
+    [0.75, 0.75, 6.7, -0.8],
+    [0.7, -0.75, 6.5, 0.85],
+    [0.6, 0.1, 7.6, 0.15],
   ];
   for (const [r, dx, dy, dz] of canopy) {
-    parts.push(gradient(blob(r, 0, dx, dy, dz, 0.82), 0x3d5522, 0x7a9a4c));
+    parts.push(gradient(jitter(blob(r, 0, dx, dy, dz, 0.8), r * 0.18, seed), 0x3d5522, 0x83a352));
   }
   return merge(parts);
 }
 
 function bushGeometry(): THREE.BufferGeometry {
   return merge([
-    gradient(blob(0.8, 0, 0, 0.52, 0, 0.72), 0x24361c, 0x4a6b33),
-    gradient(blob(0.6, 0, 0.55, 0.42, 0.28, 0.72), 0x24361c, 0x53743a),
-    gradient(blob(0.5, 0, -0.5, 0.4, -0.34, 0.72), 0x1f3018, 0x44602c),
-    gradient(blob(0.42, 0, 0.15, 0.72, -0.4, 0.72), 0x2a3f20, 0x5a7c3f),
+    gradient(jitter(blob(0.8, 0, 0, 0.52, 0, 0.72), 0.12), 0x24361c, 0x4a6b33),
+    gradient(jitter(blob(0.6, 0, 0.55, 0.42, 0.28, 0.72), 0.1, 3), 0x24361c, 0x53743a),
+    gradient(jitter(blob(0.5, 0, -0.5, 0.4, -0.34, 0.72), 0.09, 7), 0x1f3018, 0x44602c),
+    gradient(jitter(blob(0.42, 0, 0.15, 0.72, -0.4, 0.72), 0.08, 11), 0x2a3f20, 0x5a7c3f),
   ]);
 }
 
@@ -176,8 +273,11 @@ const SWAY_CHUNK = /* glsl */ `
   transformed.z += cos(swayPhase * 0.8) * swayAmount * 0.7;
 `;
 
+/** Сколько разных форм лепится на каждую породу. */
+const TREE_VARIANTS = 2;
+
 /** Высота кроны по типу дерева — нужна для падающего ствола при рубке. */
-export const TREE_HEIGHT = [6.8, 9.1, 7.2];
+export const TREE_HEIGHT = [7.4, 8.6, 8.0];
 
 interface TreeSlot {
   mesh: THREE.InstancedMesh;
@@ -195,35 +295,40 @@ export class Forest {
   private readonly props = new Map<string, { mesh: THREE.InstancedMesh; matrices: THREE.Matrix4[] }>();
 
   constructor(world: WorldData, quality: QualitySettings) {
-    const trees = [
-      { type: TreeType.Spruce, geo: spruceGeometry() },
-      { type: TreeType.Pine, geo: pineGeometry() },
-      { type: TreeType.Birch, geo: birchGeometry() },
+    // По две формы на породу: соседние деревья перестают быть близнецами.
+    const species: { type: number; build: (seed: number) => THREE.BufferGeometry }[] = [
+      { type: TreeType.Spruce, build: spruceGeometry },
+      { type: TreeType.Pine, build: pineGeometry },
+      { type: TreeType.Birch, build: birchGeometry },
     ];
 
-    for (const { type, geo } of trees) {
+    for (const { type, build } of species) {
       const list: { tree: (typeof world.trees)[number]; id: number }[] = [];
       world.trees.forEach((tree, id) => {
         if (tree.type === type) list.push({ tree, id });
       });
-      const mesh = this.makeInstanced(geo, list.length, 0.9, 0.014, true);
-      const m = new THREE.Matrix4();
-      const color = new THREE.Color();
-      list.forEach(({ tree: t, id }, i) => {
-        m.compose(
-          new THREE.Vector3(t.x, t.y, t.z),
-          new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), t.rot),
-          new THREE.Vector3(t.scale, t.scale * (0.9 + (t.rot % 0.3)), t.scale),
-        );
-        mesh.setMatrixAt(i, m);
-        this.slots.set(id, { mesh, index: i, matrix: m.clone() });
-        // Небольшой разброс оттенка, чтобы лес не выглядел штампованным.
-        const v = 0.86 + ((t.x * 13.7 + t.z * 7.3) % 1) * 0.28;
-        mesh.setColorAt(i, color.setRGB(v * 0.98, v, v * 0.94));
-      });
-      mesh.instanceMatrix.needsUpdate = true;
-      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
-      this.group.add(mesh);
+
+      for (let variant = 0; variant < TREE_VARIANTS; variant++) {
+        const mine = list.filter(({ id }) => id % TREE_VARIANTS === variant);
+        const mesh = this.makeInstanced(build(variant + type * 5), mine.length, 0.9, 0.014, true);
+        const m = new THREE.Matrix4();
+        const color = new THREE.Color();
+        mine.forEach(({ tree: t, id }, i) => {
+          m.compose(
+            new THREE.Vector3(t.x, t.y, t.z),
+            new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), t.rot),
+            new THREE.Vector3(t.scale, t.scale * (0.9 + (t.rot % 0.3)), t.scale),
+          );
+          mesh.setMatrixAt(i, m);
+          this.slots.set(id, { mesh, index: i, matrix: m.clone() });
+          // Небольшой разброс оттенка, чтобы лес не выглядел штампованным.
+          const v = 0.86 + ((t.x * 13.7 + t.z * 7.3) % 1) * 0.28;
+          mesh.setColorAt(i, color.setRGB(v * 0.98, v, v * 0.94));
+        });
+        mesh.instanceMatrix.needsUpdate = true;
+        if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+        this.group.add(mesh);
+      }
     }
 
     // Кусты режутся настройкой качества, камни и камешки — нет: они игровые.
