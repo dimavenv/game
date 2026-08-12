@@ -1,11 +1,13 @@
 import { FOREST, MOUNTAIN, RIVER, STONES, SWING, WINE, WORLD } from '../balance';
 import { ValueNoise, lerp, mulberry32, smoothstep, toSeed } from '../rng';
 import {
+  bridgePlatform,
   catamaranLayout,
   hutLayout,
   mountainObstacles,
   stallLayout,
   type BoxCollider,
+  type Platform,
   type CatamaranLayout,
   type HutLayout,
   type StallLayout,
@@ -50,6 +52,8 @@ export interface WorldData {
   stall: StallLayout;
   catamaran: CatamaranLayout;
   boxes: BoxCollider[];
+  /** Настилы, по которым ходят поверх рельефа: пока только мост. */
+  platforms: Platform[];
   obstacles: ObstacleGrid;
   /** Препятствия-стволы по индексу дерева: срубленное отключается здесь. */
   treeObstacles: Obstacle[];
@@ -176,6 +180,9 @@ export function generateWorld(seedInput: string | number): WorldData {
       if (surface === 'water') continue;
       if (!allowSand && surface === 'sand') continue;
       if (distToClearing(x, z) < WORLD.clearing.r - 4) continue;
+      // Под беседкой и на площадке тарзанки ничего не растёт и не валяется.
+      if (Math.hypot(x - MOUNTAIN.x, z - MOUNTAIN.z) < MOUNTAIN.gazeboRadius + 3) continue;
+      if (Math.hypot(x - SWING.base.x, z - SWING.base.z) < SWING.radius) continue;
       out.push({
         x,
         z,
@@ -221,6 +228,7 @@ export function generateWorld(seedInput: string | number): WorldData {
     stall,
     catamaran,
     boxes: [...hut.colliders, ...stall.colliders],
+    platforms: [bridgePlatform()],
     obstacles,
     treeObstacles,
     spawn: { ...SPAWN },

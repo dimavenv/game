@@ -40,6 +40,11 @@ export const SOUND_SLOTS: SlotSpec[] = [
   { name: 'shotgun', description: 'Выстрел из дробовика' },
   { name: 'night_start', description: 'Наступила ночь' },
   { name: 'door_creak', description: 'Дверь хижины открывается или закрывается' },
+  { name: 'animal_cow', description: 'Корова мычит' },
+  { name: 'animal_boar', description: 'Кабан хрюкает' },
+  { name: 'animal_deer', description: 'Косуля вскрикивает' },
+  { name: 'animal_duck', description: 'Утка крякает' },
+  { name: 'animal_hare', description: 'Заяц ломится через траву' },
 ];
 
 const EXTENSIONS = ['mp3', 'ogg', 'wav'];

@@ -176,6 +176,22 @@ export const RIVER = {
 } as const;
 
 /**
+ * Мост через Псекупс. Без него западный угол карты с памятником Серёге
+ * Пирату отрезан: вброд русло не перейти.
+ */
+export const BRIDGE = {
+  /** Середина моста — точно на оси русла, рядом с табличкой. */
+  x: -164,
+  z: 121,
+  /** Разворот: локальная ось Z идёт поперёк реки. */
+  yaw: -0.3,
+  halfWidth: 1.7,
+  halfLength: 17,
+  /** Высота настила над водой. */
+  rise: 1.7,
+} as const;
+
+/**
  * Тарзанка на склоне Петушка над Псекупсом. Площадка вырублена в склоне на
  * двенадцати метрах над водой, мачта наклонена к руслу — прыгают в реку.
  */
@@ -195,8 +211,8 @@ export const SWING = {
   flyTime: 2.2,
   splashTime: 1.1,
   /** Снос течением после выныривания и выход на берег. */
-  driftTime: 4.5,
-  driftSpeed: 4.5,
+  driftTime: 9,
+  driftSpeed: 5,
   swimTime: 1.8,
 } as const;
 
@@ -290,6 +306,23 @@ export const ZOMBIE = {
   spawnMinDistance: 55,
   /** ...но и не расползаются по всему лесу: стая держится вокруг игрока. */
   spawnMaxDistance: 190,
+} as const;
+
+/**
+ * Живность. Зайцы и косули пугливые, коровы домашние и пасутся у поляны,
+ * кабан не убегает, а идёт разбираться. Утки живут на озере.
+ * walk/run — метры в секунду, flee/charge — с какого расстояния реагируют.
+ */
+export const ANIMALS = {
+  hare: { count: 26, walk: 1.2, run: 6.4, flee: 15, charge: 0, damage: 0, cooldown: 0, health: 20, meat: 1, roam: 22 },
+  boar: { count: 12, walk: 1.0, run: 5.4, flee: 0, charge: 11, damage: 16, cooldown: 1.6, health: 90, meat: 3, roam: 30 },
+  cow: { count: 8, walk: 0.7, run: 2.8, flee: 6, charge: 0, damage: 0, cooldown: 0, health: 150, meat: 5, roam: 18 },
+  deer: { count: 12, walk: 1.3, run: 7.2, flee: 24, charge: 0, damage: 0, cooldown: 0, health: 60, meat: 3, roam: 40 },
+  duck: { count: 16, walk: 0.5, run: 1.8, flee: 9, charge: 0, damage: 0, cooldown: 0, health: 12, meat: 1, roam: 14 },
+  /** Дальше этого звери замирают: считать всю карту каждый кадр незачем. */
+  simulateRange: 160,
+  /** Как часто подаёт голос зверь рядом с игроком. */
+  voiceRange: 30,
 } as const;
 
 /** Оружие ближнего боя и дробовик. */

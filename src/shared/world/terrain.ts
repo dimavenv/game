@@ -32,11 +32,24 @@ export const LAND_BASE = 1.9;
 export class Terrain {
   private readonly noise: ValueNoise;
   private readonly detail: ValueNoise;
+  /** Высота вершины: по ней ровняется площадка под беседку. */
+  private readonly summitY: number;
 
   constructor(seed: string | number) {
     const s = toSeed(seed);
     this.noise = new ValueNoise(s);
     this.detail = new ValueNoise(s ^ 0x9e3779b9);
+    this.summitY = this.land(MOUNTAIN.x, MOUNTAIN.z) + this.mountain(MOUNTAIN.x, MOUNTAIN.z);
+  }
+
+  /** Холмы без гор, рек и площадок — основа, от которой всё считается. */
+  private land(x: number, z: number): number {
+    const hills =
+      LAND_BASE +
+      (this.noise.fbm(x * 0.011, z * 0.011, 4) - 0.5) * 3.6 +
+      (this.detail.fbm(x * 0.055, z * 0.055, 2) - 0.5) * 0.9;
+    const beach = smoothstep(WORLD.lakeHalf, WORLD.lakeHalf + 26, Terrain.lakeDistance(x, z));
+    return lerp(WORLD.shoreHeight, hills, beach);
   }
 
   /** Расстояние по Чебышёву — из-за него озеро выходит идеально квадратным. */
@@ -110,17 +123,17 @@ export class Terrain {
       return WORLD.shoreHeight - depth + bumps * smoothstep(1, 6, inward);
     }
 
-    const hills =
-      LAND_BASE +
-      (this.noise.fbm(x * 0.011, z * 0.011, 4) - 0.5) * 3.6 +
-      (this.detail.fbm(x * 0.055, z * 0.055, 2) - 0.5) * 0.9;
-
-    // Возле берега земля выполаживается в пляж, дальше переходит в холмы.
-    const beach = smoothstep(WORLD.lakeHalf, WORLD.lakeHalf + 26, d);
-    let h = lerp(WORLD.shoreHeight, hills, beach);
+    let h = this.land(x, z);
 
     // Гора: к самой кромке озера сходит на нет, чтобы пляж остался пляжем.
     h += this.mountain(x, z) * smoothstep(WORLD.lakeHalf, WORLD.lakeHalf + 8, d);
+
+    // Ровная площадка под беседкой: иначе она висит одним углом в воздухе.
+    const md = Math.hypot(x - MOUNTAIN.x, z - MOUNTAIN.z);
+    if (md < MOUNTAIN.gazeboRadius * 3) {
+      const flat = 1 - smoothstep(MOUNTAIN.gazeboRadius + 1.2, MOUNTAIN.gazeboRadius * 3, md);
+      h = lerp(h, this.summitY, flat);
+    }
     // Полка под тарзанку врезается в склон, русло режется поверх всего.
     h = this.shelf(h, x, z);
     h = this.river(h, x, z);

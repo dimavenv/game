@@ -1,4 +1,4 @@
-import { MOUNTAIN, SWING, WORLD } from '../balance';
+import { BRIDGE, MOUNTAIN, RIVER, SWING, WORLD } from '../balance';
 import type { Terrain } from './terrain';
 
 /** Прямоугольное препятствие, выровненное по осям: стена, прилавок, печка. */
@@ -189,6 +189,45 @@ export function mountainObstacles(): { x: number; z: number; radius: number }[] 
   }
   out.push({ x: SWING.base.x, z: SWING.base.z, radius: 0.5 });
   return out;
+}
+
+/**
+ * Прямоугольная площадка, по которой можно ходить поверх рельефа: настил
+ * моста. Повёрнута вокруг Y, поэтому проверка идёт в локальных координатах.
+ */
+export interface Platform {
+  x: number;
+  z: number;
+  hw: number;
+  hd: number;
+  yaw: number;
+  y: number;
+}
+
+/** Настил моста через Псекупс. */
+export function bridgePlatform(): Platform {
+  return {
+    x: BRIDGE.x,
+    z: BRIDGE.z,
+    hw: BRIDGE.halfWidth,
+    hd: BRIDGE.halfLength,
+    yaw: BRIDGE.yaw,
+    y: RIVER.level + BRIDGE.rise,
+  };
+}
+
+/** Высота настила под точкой или null, если там настила нет. */
+export function platformAt(platforms: Platform[], x: number, z: number): number | null {
+  for (const p of platforms) {
+    const cos = Math.cos(p.yaw);
+    const sin = Math.sin(p.yaw);
+    const dx = x - p.x;
+    const dz = z - p.z;
+    const lx = dx * cos - dz * sin;
+    const lz = dx * sin + dz * cos;
+    if (Math.abs(lx) <= p.hw && Math.abs(lz) <= p.hd) return p.y;
+  }
+  return null;
 }
 
 /** Костёр между хижиной и ларьком — ориентир на поляне. */

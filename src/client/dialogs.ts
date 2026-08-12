@@ -131,7 +131,7 @@ const SHOP: ShopEntry[] = [
 ];
 
 /** Что Томер скупает: ресурсы и улов. */
-const SELLABLE: ItemId[] = ['apple', 'log', 'stone', 'grape', 'must', 'wine_young', 'wine_aged', 'wine_vintage'];
+const SELLABLE: ItemId[] = ['apple', 'log', 'stone', 'meat', 'grape', 'must', 'wine_young', 'wine_aged', 'wine_vintage'];
 
 /** Цена стопки с учётом веса рыбы. */
 function stackValue(id: ItemId, count: number, weight?: number): number {

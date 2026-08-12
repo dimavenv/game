@@ -3,6 +3,7 @@ import {
   APPLES,
   CHOP,
   ECONOMY,
+  ANIMALS,
   AVI,
   MOUNTAIN,
   RIVER,
@@ -19,6 +20,15 @@ import {
   WORLD,
   WORLD_SEED,
 } from '../shared/balance';
+import {
+  ANIMAL_NAME,
+  damageAnimal,
+  findAnimalTarget,
+  shotAnimals,
+  spawnAnimals,
+  stepAnimals,
+  type Animal,
+} from '../shared/animals';
 import { fishItemId, fishLabel, rollFish } from '../shared/fishing';
 import { GRADE_LABEL, daysToNextGrade, wineGrade, wineItem } from '../shared/wine';
 import { aviSpot, nightJobText, type AviSpot } from '../shared/avi';
@@ -97,6 +107,8 @@ import {
   type StallBuild,
 } from './render/structures';
 import { buildCatamaran, type CatamaranBuild } from './render/catamaran';
+import { AnimalsView } from './render/animals';
+import { buildBridge } from './render/bridge';
 import { buildGazebo, buildSwing, type GazeboBuild, type SwingBuild } from './render/mountain';
 import { RopeSwing } from './ropeswing';
 import { buildTerrainMesh } from './render/terrainMesh';
@@ -153,6 +165,9 @@ export class Game {
   private readonly campfire: CampfireBuild;
   private readonly catamaran: CatamaranBuild;
   private readonly gazebo: GazeboBuild;
+  private readonly animals: Animal[];
+  private readonly animalsView: AnimalsView;
+  private animalVoiceTimer = 3;
   private readonly swingRig: SwingBuild;
   private readonly ropeSwing: RopeSwing;
   private readonly chopEffects = new ChopEffects();
@@ -278,6 +293,13 @@ export class Game {
         Math.atan2(MOUNTAIN.x - RIVER.sign.x, MOUNTAIN.z - RIVER.sign.z),
       ),
     );
+
+    this.scene.add(buildBridge(terrain));
+
+    // Звери заводятся один раз на партию и дальше живут сами.
+    this.animals = spawnAnimals(this.rng, this.world);
+    this.animalsView = new AnimalsView(this.animals);
+    this.scene.add(this.animalsView.group);
 
     this.catamaran = buildCatamaran(this.world.catamaran);
     this.gazebo = buildGazebo(terrain);
@@ -570,6 +592,7 @@ export class Game {
       this.player.health = Math.min(PLAYER.maxHealth, this.player.health + HEALTH.stoveRegen * dt * scale);
     }
 
+    this.updateAnimals(dt);
     this.updateDrugs(dt);
     this.updateAviAudio();
 
@@ -691,6 +714,12 @@ export class Game {
     const victim = findMeleeTarget(this.zombies, this.player, WEAPONS.axe.range, WEAPONS.axe.arc);
     if (victim) {
       if (damageZombie(victim, damage)) this.onZombieKilled();
+      return;
+    }
+
+    const beast = findAnimalTarget(this.animals, this.player, WEAPONS.axe.range, WEAPONS.axe.arc);
+    if (beast) {
+      if (damageAnimal(beast, damage)) this.harvest(beast);
       return;
     }
 
@@ -1195,7 +1224,15 @@ export class Game {
       if (damageZombie(zombie, damage, false)) killed += 1;
     }
     for (let i = 0; i < killed; i++) this.onZombieKilled();
-    if (targets.length === 0) this.toasts.push('Мимо', 'bad');
+
+    // Дробь достаётся и зверю: урон падает с дальностью.
+    const beasts = shotAnimals(this.animals, this.player, WEAPONS.shotgun.range, WEAPONS.shotgun.spread);
+    for (const { animal, damage } of beasts) {
+      const dealt = WEAPONS.shotgun.farDamage + (WEAPONS.shotgun.nearDamage - WEAPONS.shotgun.farDamage) * damage;
+      if (damageAnimal(animal, dealt)) this.harvest(animal);
+    }
+
+    if (targets.length === 0 && beasts.length === 0) this.toasts.push('Мимо', 'bad');
   }
 
   private reloadShotgun(): void {
@@ -1735,6 +1772,42 @@ export class Game {
     this.toasts.push('Это не едят', 'bad');
   }
 
+
+  /** Стадо: шаг поведения, голоса и удары кабана. */
+  private updateAnimals(dt: number): void {
+    const hit = stepAnimals(this.animals, this.player, this.world, dt, this.rng);
+    if (hit.damage > 0 && !this.dying) this.takeDamage(hit.damage);
+    this.animalsView.sync(this.animals, this.camera.position.x, this.camera.position.z);
+
+    // Кто-нибудь поблизости время от времени подаёт голос.
+    this.animalVoiceTimer -= dt;
+    if (this.animalVoiceTimer > 0) return;
+    this.animalVoiceTimer = 4 + this.rng() * 7;
+    let best: Animal | null = null;
+    let bestD: number = ANIMALS.voiceRange;
+    for (const a of this.animals) {
+      if (a.state === 'dead') continue;
+      const d = Math.hypot(a.x - this.player.x, a.z - this.player.z);
+      if (d < bestD) {
+        best = a;
+        bestD = d;
+      }
+    }
+    if (best) this.audio.animal(best.kind, bestD);
+  }
+
+  /** Добыча: зверь падает, с него берётся мясо. */
+  private harvest(animal: Animal): void {
+    const meat = ANIMALS[animal.kind].meat;
+    const left = addItem(this.state.inventory, 'meat', meat);
+    this.audio.zombieDown();
+    this.toasts.push(
+      left > 0
+        ? `${ANIMAL_NAME[animal.kind]} добыт, но мясо не влезло в рюкзак`
+        : `${ANIMAL_NAME[animal.kind]} добыт. Мясо: +${meat}`,
+      left > 0 ? 'bad' : 'normal',
+    );
+  }
 
   /** Приход, отходняк и накопленная героином боль. */
   private updateDrugs(dt: number): void {

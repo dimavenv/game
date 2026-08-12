@@ -3,7 +3,7 @@ import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js
 import { GROUND_COVER, MOUNTAIN, SWING, WORLD } from '../../shared/balance';
 import { campfirePosition } from '../../shared/world/buildings';
 import { mulberry32 } from '../../shared/rng';
-import type { Terrain } from '../../shared/world/terrain';
+import { Terrain } from '../../shared/world/terrain';
 import type { WorldData } from '../../shared/world/worldgen';
 import type { QualitySettings } from '../quality';
 
@@ -340,7 +340,9 @@ export class GroundCover {
         const z = (cz + rng()) * this.cell;
         const rot = rng() * Math.PI * 2;
         const size = 0.75 + rng() * 0.6;
-        if (this.terrain.surface(x, z) === 'water') continue;
+        // На песке трава не растёт: ни у воды, ни на пляже вокруг озера.
+        if (this.terrain.surface(x, z) !== 'grass') continue;
+        if (Terrain.lakeDistance(x, z) < WORLD.lakeHalf + 4.5) continue;
         if (this.blocked(x, z)) continue;
         const slot = layer.free.pop();
         if (slot === undefined) break;

@@ -382,6 +382,55 @@ export class GameAudio {
     }, 180);
   }
 
+  /** Голос зверя: у каждого свой характер, но всё из того же шума. */
+  animal(kind: 'hare' | 'boar' | 'cow' | 'deer' | 'duck', distance: number): void {
+    const near = Math.max(0, 1 - distance / 34);
+    if (near <= 0.02) return;
+    if (this.playSlot(`animal_${kind}`, near)) return;
+    if (kind === 'cow') {
+      // Протяжное «муу»: тон плывёт вниз.
+      const ctx = this.ctx;
+      if (!ctx) return;
+      const now = ctx.currentTime;
+      const osc = ctx.createOscillator();
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(150, now);
+      osc.frequency.linearRampToValueAtTime(112, now + 1.2);
+      const filter = ctx.createBiquadFilter();
+      filter.type = 'lowpass';
+      filter.frequency.value = 700;
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.0001, now);
+      g.gain.linearRampToValueAtTime(0.09 * near, now + 0.25);
+      g.gain.exponentialRampToValueAtTime(0.0001, now + 1.4);
+      osc.connect(filter).connect(g).connect(this.muffle);
+      osc.start(now);
+      osc.stop(now + 1.45);
+      return;
+    }
+    if (kind === 'boar') {
+      for (let i = 0; i < 3; i++) {
+        window.setTimeout(
+          () => this.burst({ duration: 0.12, gain: 0.11 * near, type: 'lowpass', freq: 900, freqTo: 260, q: 1.2 }),
+          i * 160,
+        );
+      }
+      return;
+    }
+    if (kind === 'duck') {
+      for (let i = 0; i < 2 + Math.floor(Math.random() * 2); i++) {
+        window.setTimeout(() => this.blip(420 + Math.random() * 90, 0.11, 0.05 * near, 'square'), i * 190);
+      }
+      return;
+    }
+    if (kind === 'deer') {
+      this.burst({ duration: 0.28, gain: 0.08 * near, type: 'bandpass', freq: 1100, freqTo: 600, q: 1.4 });
+      return;
+    }
+    // Заяц молчит, слышно только, как он ломится через траву.
+    this.burst({ duration: 0.35, gain: 0.07 * near, type: 'highpass', freq: 3200 });
+  }
+
   bandage(): void {
     this.burst({ duration: 0.5, attack: 0.2, gain: 0.09, type: 'highpass', freq: 2400 });
   }

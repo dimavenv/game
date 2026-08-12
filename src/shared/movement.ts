@@ -1,5 +1,6 @@
 import { PLAYER, WORLD } from './balance';
 import { clamp } from './rng';
+import { platformAt } from './world/buildings';
 import type { Obstacle } from './world/grid';
 import type { Surface } from './world/terrain';
 import type { WorldData } from './world/worldgen';
@@ -81,7 +82,9 @@ const scratch: Obstacle[] = [];
 /** Пытается встать в точку, расталкивая игрока со стволов. null — нельзя. */
 function resolve(world: WorldData, x: number, z: number): [number, number] | null {
   if (Math.abs(x) > WORLD.bound || Math.abs(z) > WORLD.bound) return null;
-  if (world.terrain.depth(x, z) > PLAYER.maxWadeDepth) return null;
+  // Над настилом моста глубина под ногами не важна.
+  const deck = platformAt(world.platforms, x, z);
+  if (deck === null && world.terrain.depth(x, z) > PLAYER.maxWadeDepth) return null;
 
   let px = x;
   let pz = z;
@@ -113,7 +116,9 @@ function resolve(world: WorldData, x: number, z: number): [number, number] | nul
 
   // Ствол мог вытолкнуть в воду или за границу — тогда шаг не засчитываем.
   if (Math.abs(px) > WORLD.bound || Math.abs(pz) > WORLD.bound) return null;
-  if (world.terrain.depth(px, pz) > PLAYER.maxWadeDepth + 0.15) return null;
+  if (platformAt(world.platforms, px, pz) === null && world.terrain.depth(px, pz) > PLAYER.maxWadeDepth + 0.15) {
+    return null;
+  }
   return [px, pz];
 }
 
@@ -133,9 +138,10 @@ export function stepPlayer(state: PlayerState, input: MoveInput, world: WorldDat
     wishZ /= wishLen;
   }
 
-  const depth = world.terrain.depth(state.x, state.z);
+  const deck = platformAt(world.platforms, state.x, state.z);
+  const depth = deck === null ? world.terrain.depth(state.x, state.z) : 0;
   state.wading = depth > 0.02;
-  state.surface = world.terrain.surface(state.x, state.z);
+  state.surface = deck === null ? world.terrain.surface(state.x, state.z) : 'grass';
 
   const wantsSprint = input.sprint && wishLen > 0.1 && !state.wading && !input.overloaded;
   const canSprint = wantsSprint && !state.exhausted && state.breath > 0;
@@ -200,7 +206,10 @@ export function stepPlayer(state: PlayerState, input: MoveInput, world: WorldDat
   state.speed = Math.hypot(state.vx, state.vz);
 
   // Прыжок и падение.
-  const ground = Math.max(world.terrain.height(state.x, state.z), WORLD.waterLevel - PLAYER.maxWadeDepth);
+  const ground =
+    deck !== null
+      ? deck
+      : Math.max(world.terrain.height(state.x, state.z), WORLD.waterLevel - PLAYER.maxWadeDepth);
   if (state.onGround) {
     // Небольшое сглаживание, чтобы кочки не дёргали камеру.
     state.feetY += (ground - state.feetY) * Math.min(1, 12 * dt);

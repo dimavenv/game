@@ -20,6 +20,7 @@ export type ItemId =
   | 'fish_perch'
   | 'fish_bighead'
   | 'boot'
+  | 'meat'
   | 'cocaine'
   | 'hash'
   | 'heroin';
@@ -52,6 +53,7 @@ export const ITEMS: Record<ItemId, ItemSpec> = {
   fish_crucian: { name: 'карась', weight: 0.6, stack: 1, sell: 18, icon: '🐟' },
   fish_perch: { name: 'окунь', weight: 0.8, stack: 1, sell: 35, icon: '🐟' },
   fish_bighead: { name: 'толстолобик', weight: 3, stack: 1, sell: 85, icon: '🐠' },
+  meat: { name: 'мясо', weight: 1.4, stack: 10, sell: 40, icon: '🥩' },
   boot: { name: 'старый ботинок', weight: 1, stack: 1, sell: 1, icon: '👢' },
   cocaine: { name: 'кокаин', weight: 0.05, stack: 5, sell: 50, icon: '❄️' },
   hash: { name: 'гашиш', weight: 0.05, stack: 5, sell: 30, icon: '🌿' },
