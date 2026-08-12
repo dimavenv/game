@@ -136,8 +136,14 @@ export class StompScene {
     const inBeat = (this.elapsed % BEAT) / BEAT;
 
     if (beat !== this.beat) {
+      // Каждый такт — новый удар ногой. Считаем по номеру такта, а не по
+      // окну времени: при низком кадре узкое окно просто проскакивает.
       this.beat = beat;
       this.text = `Топчешь виноград… ${Math.round(done * 100)}%`;
+      if (beat > 0) {
+        this.burst();
+        this.onBeat?.();
+      }
     }
 
     // Ноги ходят по очереди: одна поднимается, вторая давит.
@@ -151,13 +157,6 @@ export class StompScene {
       leg.rotation.x = raise * 0.5;
       // Опорная нога чуть проседает под весом.
       if (!own) leg.position.y -= 0.02 * Math.sin(inBeat * Math.PI);
-    }
-
-    // Удар: брызги, звук и толчок камеры вниз.
-    const hit = inBeat > 0.62 && inBeat < 0.72;
-    if (hit && this.splashLife[0] <= 0) {
-      this.burst();
-      this.onBeat?.();
     }
 
     this.lift = -0.55 - Math.abs(Math.sin(this.elapsed / BEAT * Math.PI)) * 0.05;
