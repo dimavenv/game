@@ -1675,8 +1675,10 @@ export class Game {
   private updateZombies(dt: number): void {
     if (this.zombies.length === 0) return;
 
-    // В сети стаю двигает сервер, здесь остаются стоны и отрисовка.
-    if (!this.net?.online) {
+    // В сети стаю двигает сервер, здесь остаются стоны, походка и отрисовка.
+    if (this.net?.online) {
+      for (const z of this.zombies) z.phase += dt;
+    } else {
       const hit = stepZombies(this.zombies, this.actors(), this.world, dt, this.rng);
       const mine = hit.damage.get(SELF_ID) ?? 0;
       if (mine > 0 && !this.dying) this.takeDamage(mine);
@@ -3265,7 +3267,6 @@ export class Game {
       zombie.yaw = w.r;
       zombie.state = w.s;
       zombie.deadFor = w.d;
-      zombie.phase += 0.08;
     }
     if (this.zombies.length !== alive.size) {
       this.zombies = this.zombies.filter((z) => alive.has(z.id));
@@ -3336,7 +3337,14 @@ export class Game {
   /** Стадо: шаг поведения, голоса и удары кабана. */
   private updateAnimals(dt: number): void {
     // В сети стадо считает сервер, здесь остаются только голоса и отрисовка.
-    if (!this.net?.online) {
+    if (this.net?.online) {
+      // Фазу шага и оседание туши крутим у себя: по проводу их гонять незачем,
+      // а без них ноги стоят на месте и зверь не заваливается на бок.
+      for (const a of this.animals) {
+        a.phase += dt * (1 + a.speed);
+        if (a.state === 'dead') a.deadFor += dt;
+      }
+    } else {
       const hit = stepAnimals(this.animals, this.actors(), this.world, dt, this.rng);
       const mine = hit.damage.get(SELF_ID) ?? 0;
       if (mine > 0 && !this.dying) this.takeDamage(mine);
