@@ -2949,7 +2949,13 @@ export class Game {
       .filter((s) => s.kind === 'flag')
       .map((s) => ({ x: s.x, z: s.z }));
 
-    this.mapScreen.open(this.world.terrain, landmarks, flags, () => this.resumeAfterUi());
+    // Товарищей на карте видно всегда: это и есть главный способ встретиться.
+    const people = this.remotes.all.map((person) => ({
+      x: person.point.x,
+      z: person.point.z,
+      name: person.name,
+    }));
+    this.mapScreen.open(this.world.terrain, landmarks, flags, people, () => this.resumeAfterUi());
   }
 
   /** Внутри ли игрок в щели ущелья: по этому и заводится счёт дроздов. */

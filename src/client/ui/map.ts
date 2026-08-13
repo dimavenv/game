@@ -29,6 +29,13 @@ export interface MapFlag {
   z: number;
 }
 
+/** Товарищ по лесу: синяя точка с ником. Своей точки на карте по-прежнему нет. */
+export interface MapPlayer {
+  x: number;
+  z: number;
+  name: string;
+}
+
 export class MapScreen {
   private readonly root: HTMLDivElement;
   private readonly canvas: HTMLCanvasElement;
@@ -38,6 +45,7 @@ export class MapScreen {
   private relief: HTMLCanvasElement | null = null;
 
   private flags: MapFlag[] = [];
+  private players: MapPlayer[] = [];
   private landmarks: Landmark[] = [];
   private closeHandler: (() => void) | null = null;
 
@@ -64,13 +72,22 @@ export class MapScreen {
     return !this.root.classList.contains('hidden');
   }
 
-  open(terrain: Terrain, landmarks: Landmark[], flags: MapFlag[], onClose: () => void): void {
+  open(
+    terrain: Terrain,
+    landmarks: Landmark[],
+    flags: MapFlag[],
+    players: MapPlayer[],
+    onClose: () => void,
+  ): void {
     this.landmarks = landmarks;
     this.flags = flags;
+    this.players = players;
     this.closeHandler = onClose;
     if (!this.relief) this.relief = buildRelief(terrain);
     this.hintEl.textContent =
-      'Флажки ставятся молотом на месте. Пещеры и памятник появляются, когда их найдёшь. M или Esc — закрыть';
+      players.length > 0
+        ? 'Синим отмечены те, кто сейчас в лесу. Флажки ставятся молотом. M или Esc — закрыть'
+        : 'Флажки ставятся молотом на месте. Пещеры и памятник появляются, когда их найдёшь. M или Esc — закрыть';
     this.draw();
     this.root.classList.remove('hidden');
   }
@@ -142,6 +159,26 @@ export class MapScreen {
       ctx.fillText(String(index + 1), x + 5, y - 13);
       ctx.font = '13px Georgia, serif';
     });
+
+    // Товарищи: синяя точка с ником. Себя на карте нет и не будет — где ты
+    // сам, соображай по местности, как и раньше.
+    for (const person of this.players) {
+      const [x, y] = this.toScreen(person.x, person.z);
+      ctx.beginPath();
+      ctx.arc(x, y, 5, 0, Math.PI * 2);
+      ctx.fillStyle = '#2f5d86';
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(240, 232, 210, 0.9)';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      ctx.font = '12px Georgia, serif';
+      ctx.fillStyle = '#22405c';
+      ctx.strokeStyle = 'rgba(240, 232, 210, 0.85)';
+      ctx.lineWidth = 3;
+      ctx.strokeText(person.name, x, y - 12);
+      ctx.fillText(person.name, x, y - 12);
+      ctx.font = '13px Georgia, serif';
+    }
   }
 }
 
