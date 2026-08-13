@@ -237,6 +237,11 @@ wss.on('connection', (socket) => {
     }
   });
 
+  // Ответ на ping-кадр приходит сюда сам, без участия страницы.
+  socket.on('pong', () => {
+    if (client) client.silent = 0;
+  });
+
   socket.on('close', () => {
     if (!client) return;
     clients.delete(client.id);
@@ -281,19 +286,21 @@ setInterval(() => {
 }, 1000 / SNAPSHOT_HZ);
 
 /**
- * Тихо отваливающиеся соединения. Терпим три пропущенных опроса подряд, то
- * есть три четверти минуты: на слабой машине браузер может застрять на
- * тяжёлом кадре, и выкидывать за это из леса было бы свинством.
+ * Тихо отваливающиеся соединения. Опрашиваем не своим сообщением, а ping-кадром
+ * самого WebSocket: на него браузер отвечает сетевым слоем, не спрашивая
+ * страницу. Занятый отрисовкой клиент из-за этого больше не вылетает.
+ *
+ * Терпим три пропущенных ответа подряд — три четверти минуты.
  */
 setInterval(() => {
   for (const client of clients.values()) {
     if (client.silent >= 3) {
-      log(`${client.name} молчит, отключаю`);
+      log(`${client.name} не отвечает, отключаю`);
       client.socket.terminate();
       continue;
     }
     client.silent += 1;
-    send(client.socket, { t: 'ping', time: Date.now() });
+    if (client.socket.readyState === client.socket.OPEN) client.socket.ping();
   }
 }, 15000);
 

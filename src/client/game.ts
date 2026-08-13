@@ -819,7 +819,9 @@ export class Game {
 
     const previousDay = this.clock.day;
     const atStove = this.seat?.stove === true;
-    const scale = atStove && this.state.world.stoveFuel > 0 ? TIME.stoveTimeScale : 1;
+    // Время у кресла бежит быстрее только в одиночной игре: в сети сутки идут
+    // на сервере, и перематывать их одному за двоих нельзя.
+    const scale = atStove && this.state.world.stoveFuel > 0 && !this.net?.online ? TIME.stoveTimeScale : 1;
     advanceClock(this.clock, dt, scale);
     if (this.clock.day !== previousDay) this.newDay();
     this.nightCycle();
@@ -1134,8 +1136,13 @@ export class Game {
       case 'chair': {
         const chair = this.world.hut.chairs[1];
         this.seat = { x: chair.x, y: this.world.hut.floorY, z: chair.z, stove: true };
+        const warm = this.state.world.stoveFuel > 0;
         this.toasts.push(
-          this.state.world.stoveFuel > 0 ? 'Сидишь у печки. Время идёт быстрее' : 'Сидишь. Печь холодная',
+          !warm
+            ? 'Сидишь. Печь холодная'
+            : this.net?.online
+              ? 'Сидишь у печки. Раны затягиваются'
+              : 'Сидишь у печки. Время идёт быстрее',
         );
         break;
       }
