@@ -178,7 +178,13 @@ export function stepAnimals(
     if (a.state === 'dead') {
       a.deadFor += dt;
       a.speed = 0;
-      // Туша лежит своё, потом лес тихо возвращает зверя — но не на глазах.
+      // Разделанную тушу убираем сразу: брать с неё уже нечего.
+      if (a.butchered) {
+        const awayFromPlayer = Math.hypot(a.homeX - player.x, a.homeZ - player.z);
+        if (awayFromPlayer > ANIMALS.respawnAway) revive(a, world.terrain, rng);
+        continue;
+      }
+      // Целая туша лежит своё, потом лес тихо возвращает зверя — но не на глазах.
       if (a.deadFor > ANIMALS.respawn) {
         const away = Math.hypot(a.homeX - player.x, a.homeZ - player.z);
         if (away > ANIMALS.respawnAway) revive(a, world.terrain, rng);

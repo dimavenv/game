@@ -2,6 +2,7 @@ import { PLAYER, SURVIVAL, WORLD } from './balance';
 import { clamp } from './rng';
 import { platformAt } from './world/buildings';
 import { clampToGorge, insideGorge } from './world/gorge';
+import { clampToCave } from './world/caves';
 import type { Obstacle } from './world/grid';
 import { Terrain, type Surface } from './world/terrain';
 import type { WorldData } from './world/worldgen';
@@ -209,6 +210,14 @@ export function stepPlayer(state: PlayerState, input: MoveInput, world: WorldDat
       const [cx, cz] = clampToGorge(pos[0], pos[1]);
       pos[0] = cx;
       pos[1] = cz;
+    }
+    // То же в пещерах: стены хода держат только того, кто в самом ходу.
+    for (const cave of world.caves) {
+      const clamped = clampToCave(cave, state.x, state.z, pos[0], pos[1], state.feetY);
+      if (!clamped) continue;
+      pos[0] = clamped[0];
+      pos[1] = clamped[1];
+      break;
     }
     const moved = Math.hypot(pos[0] - state.x, pos[1] - state.z);
     state.distance += moved;

@@ -433,8 +433,9 @@ export class AnimalsView {
       touched.add(slot.kind);
 
       // Далёкие и давно павшие просто исчезают.
+      // Разделанная туша исчезает сразу — на земле от неё ничего не осталось.
       const far = Math.hypot(a.x - cameraX, a.z - cameraZ) > ANIMALS.simulateRange;
-      if (far || (a.state === 'dead' && a.deadFor > ANIMALS.respawn - 10)) {
+      if (far || (a.state === 'dead' && (a.butchered || a.deadFor > ANIMALS.respawn - 10))) {
         mesh.setMatrixAt(slot.index, HIDDEN);
         continue;
       }

@@ -40,6 +40,8 @@ export interface WorldState {
   monumentFound: boolean;
   /** В какие сутки игрок последний раз называл число дроздов. */
   thrushDay: number;
+  /** Сколько яблок за всю игру отдали Петровне. Толку никакого, но приятно. */
+  petrovnaApples: number;
   nextStructureId: number;
   /** Сколько секунд ещё горит печь. */
   stoveFuel: number;
@@ -78,6 +80,7 @@ export function createGameState(appleTreeCount: number): GameState {
       cavesFound: [],
       monumentFound: false,
       thrushDay: -99,
+      petrovnaApples: 0,
       nextStructureId: 1,
       stoveFuel: 0,
       lightUpDay: -99,

@@ -27,6 +27,8 @@ export interface Blueprint {
   stones: number;
   /** Саженцы — для лозы. */
   saplings?: number;
+  /** Выделанная кожа — на полотнище флажка. */
+  leather?: number;
   /** Габариты основания в метрах (полуразмеры). */
   hw: number;
   hd: number;
@@ -122,9 +124,10 @@ export const BLUEPRINTS: Record<BlueprintId, Blueprint> = {
   },
   flag: {
     name: 'Флажок',
-    hint: 'Отмечает место на карте',
+    hint: 'Палка и кожа. Отмечает место на карте',
     logs: 1,
     stones: 0,
+    leather: 1,
     hw: 0.3,
     hd: 0.3,
     height: 1.7,

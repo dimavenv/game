@@ -8,7 +8,7 @@ import type { GameState, BoulderState, TreeMutation } from '../shared/state';
 import type { WorldClock } from '../shared/time';
 
 const KEY = 'krugloe-ozero-save';
-const VERSION = 10;
+const VERSION = 11;
 
 interface SaveData {
   version: number;
@@ -26,6 +26,7 @@ interface SaveData {
   cavesFound: number[];
   monumentFound: boolean;
   thrushDay: number;
+  petrovnaApples: number;
   nextStructureId: number;
   vines: [number, number][];
   stoveFuel: number;
@@ -64,6 +65,7 @@ export function saveGame(state: GameState, clock: WorldClock, player: PlayerStat
     cavesFound: state.world.cavesFound,
     monumentFound: state.world.monumentFound,
     thrushDay: state.world.thrushDay,
+    petrovnaApples: state.world.petrovnaApples,
     nextStructureId: state.world.nextStructureId,
     vines: [...state.world.vines.entries()],
     stoveFuel: state.world.stoveFuel,
@@ -118,6 +120,7 @@ export function loadGame(state: GameState, clock: WorldClock, player: PlayerStat
   state.world.cavesFound = data.cavesFound ?? [];
   state.world.monumentFound = data.monumentFound ?? false;
   state.world.thrushDay = data.thrushDay ?? -99;
+  state.world.petrovnaApples = data.petrovnaApples ?? 0;
   state.world.nextStructureId = data.nextStructureId ?? 1;
   state.world.vines = new Map(data.vines ?? []);
   (data.appleTrees ?? []).forEach((pickedDay, i) => {

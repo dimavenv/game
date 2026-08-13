@@ -1,6 +1,7 @@
 import { WEAPONS, WORLD, ZOMBIE } from './balance';
 import type { PlayerState } from './movement';
 import { clamp } from './rng';
+import { caveHitAt, clampToCave, type Cave } from './world/caves';
 import type { Obstacle } from './world/grid';
 import type { WorldData } from './world/worldgen';
 
@@ -24,6 +25,8 @@ export interface Zombie {
   deadFor: number;
   /** Фаза шага, чтобы каждый ковылял по-своему. */
   phase: number;
+  /** id пещеры, если это её обитатель. Такие наружу не выходят. */
+  cave?: number;
 }
 
 export interface ZombieHit {
@@ -82,7 +85,60 @@ export function spawnZombies(
   return out;
 }
 
+/**
+ * Обитатели пещеры. Стоят по залам подальше от зева, чтобы с порога их не
+ * было видно, и никогда не выходят наружу: движение прижимается к ходу.
+ */
+export function spawnCaveZombies(rng: () => number, cave: Cave, startId: number): Zombie[] {
+  // Годятся залы, до которых от входа уже прилично идти.
+  const deep = cave.nodes.filter(
+    (node) => Math.hypot(node.x - cave.mouth.x, node.z - cave.mouth.z) > ZOMBIE.cave.fromMouth,
+  );
+  if (deep.length === 0) return [];
+
+  const out: Zombie[] = [];
+  for (let i = 0; i < ZOMBIE.cave.count; i++) {
+    const node = deep[Math.floor(rng() * deep.length) % deep.length];
+    // Разводим внутри зала, но не в самую стену.
+    const angle = rng() * Math.PI * 2;
+    const r = rng() * Math.max(0, node.radius - 0.8);
+    out.push({
+      id: startId + i,
+      x: node.x + Math.cos(angle) * r,
+      z: node.z + Math.sin(angle) * r,
+      y: node.y,
+      yaw: rng() * Math.PI * 2,
+      health: ZOMBIE.health,
+      state: 'wander',
+      goalX: node.x,
+      goalZ: node.z,
+      goalTimer: 0,
+      attackTimer: 0,
+      stagger: 0,
+      deadFor: 0,
+      phase: rng() * Math.PI * 2,
+      cave: cave.id,
+    });
+  }
+  return out;
+}
+
 const scratch: Obstacle[] = [];
+
+/**
+ * Шаг пещерного: ни рельеф, ни поляна ему не указ — он ходит по полу хода и
+ * упирается в его стены. Возвращает false, если пещеры под ним нет (значит,
+ * его вынесло куда-то не туда — такого просто не двигаем).
+ */
+function slideInCave(cave: Cave, z: Zombie, nx: number, nz: number): void {
+  const clamped = clampToCave(cave, z.x, z.z, nx, nz, z.y);
+  if (!clamped) return;
+  const hit = caveHitAt(cave, clamped[0], clamped[1], z.y);
+  if (!hit) return;
+  z.x = clamped[0];
+  z.z = clamped[1];
+  z.y = hit.floor;
+}
 
 /** Обходит стволы: если упёрся, сдвигается вбок. */
 function slide(world: WorldData, z: Zombie, nx: number, nz: number): void {
@@ -121,7 +177,7 @@ export function stepZombies(
   rng: () => number,
 ): ZombieHit {
   let damage = 0;
-  const playerSafe = distanceToClearing(player.x, player.z) < ZOMBIE.safeRadius;
+  const onClearing = distanceToClearing(player.x, player.z) < ZOMBIE.safeRadius;
 
   for (const z of zombies) {
     if (z.state === 'dying') {
@@ -134,6 +190,10 @@ export function stepZombies(
       z.stagger -= dt;
       continue;
     }
+
+    // Пещерному поляна не убежище: он про неё и не знает, он сидит в горе.
+    const cave = z.cave === undefined ? null : world.caves[z.cave] ?? null;
+    const playerSafe = cave ? false : onClearing;
 
     const dx = player.x - z.x;
     const dz = player.z - z.z;
@@ -159,14 +219,19 @@ export function stepZombies(
       } else {
         z.state = 'chase';
         const speed = ZOMBIE.chaseSpeed;
-        slide(world, z, z.x + (dx / distance) * speed * dt, z.z + (dz / distance) * speed * dt);
+        const nx = z.x + (dx / distance) * speed * dt;
+        const nz = z.z + (dz / distance) * speed * dt;
+        if (cave) slideInCave(cave, z, nx, nz);
+        else slide(world, z, nx, nz);
       }
     } else {
       z.goalTimer -= dt;
       if (z.goalTimer <= 0) {
         z.goalTimer = 4 + rng() * 6;
-        z.goalX = z.x + (rng() * 2 - 1) * 14;
-        z.goalZ = z.z + (rng() * 2 - 1) * 14;
+        // В ходу далеко не забредёшь — цель выбирается поближе.
+        const reach = cave ? 6 : 14;
+        z.goalX = z.x + (rng() * 2 - 1) * reach;
+        z.goalZ = z.z + (rng() * 2 - 1) * reach;
       }
       const gx = z.goalX - z.x;
       const gz = z.goalZ - z.z;
@@ -174,11 +239,15 @@ export function stepZombies(
       if (gd > 0.5) {
         z.yaw = Math.atan2(gx, gz);
         const speed = ZOMBIE.walkSpeed;
-        slide(world, z, z.x + (gx / gd) * speed * dt, z.z + (gz / gd) * speed * dt);
+        const nx = z.x + (gx / gd) * speed * dt;
+        const nz = z.z + (gz / gd) * speed * dt;
+        if (cave) slideInCave(cave, z, nx, nz);
+        else slide(world, z, nx, nz);
       }
     }
 
-    z.y = world.terrain.height(z.x, z.z);
+    // Пещерному высоту задаёт пол хода: рельеф-то у него над головой.
+    if (!cave) z.y = world.terrain.height(z.x, z.z);
   }
 
   return { damage };

@@ -235,40 +235,41 @@ export function cavePlatforms(cave: Cave): Platform[] {
   return out;
 }
 
-/** Круглые препятствия вдоль стен: из хода не выйдешь боком в толщу горы. */
-export function caveWalls(cave: Cave): { x: number; z: number; radius: number }[] {
-  const out: { x: number; z: number; radius: number }[] = [];
-  const step = 1.6;
-
-  for (const segment of cave.segments) {
-    const a = cave.nodes[segment.from];
-    const b = cave.nodes[segment.to];
-    const dx = b.x - a.x;
-    const dz = b.z - a.z;
-    const length = Math.hypot(dx, dz) || 1;
-    const nx = -dz / length;
-    const nz = dx / length;
-    const count = Math.max(2, Math.round(length / step));
-    for (let i = 0; i <= count; i++) {
-      const t = i / count;
-      const cx = a.x + dx * t;
-      const cz = a.z + dz * t;
-      // У самых залов стенки не ставим: там ход раскрывается.
-      const nearNode = Math.min(t * length, (1 - t) * length);
-      const offset = segment.halfWidth + 0.7;
-      if (nearNode < a.radius * 0.8 || nearNode < b.radius * 0.8) continue;
-      out.push({ x: cx + nx * offset, z: cz + nz * offset, radius: 0.8 });
-      out.push({ x: cx - nx * offset, z: cz - nz * offset, radius: 0.8 });
-    }
-  }
-  return out;
+/**
+ * Ближайшая точка пола пещеры под данной координатой: расстояние поперёк хода,
+ * высота пола и куда прижимать. null — под этой точкой пещеры нет.
+ *
+ * Проверка идёт по высоте тоже: ходы лежат внутри холмов, и без неё игрок,
+ * стоящий на вершине над тоннелем, считался бы «в пещере» — темнело небо, а
+ * стены хода не пускали к беседке.
+ */
+export interface CaveHit {
+  /** Насколько точка ушла от оси хода. */
+  distance: number;
+  /** Полуширина хода в этом месте. */
+  halfWidth: number;
+  /** Высота пола. */
+  floor: number;
+  /** Ближайшая точка оси. */
+  x: number;
+  z: number;
 }
 
-/** Внутри ли точка пещеры — по этому гасится дневной свет. */
-export function insideCave(cave: Cave, x: number, z: number): boolean {
-  for (const node of cave.nodes) {
-    if (Math.hypot(node.x - x, node.z - z) < node.radius + 0.6) return true;
-  }
+/** На сколько метров по вертикали игрок считается «в этом ходу». */
+const HEADROOM = 3.2;
+
+export function caveHitAt(cave: Cave, x: number, z: number, feetY: number): CaveHit | null {
+  let best: CaveHit | null = null;
+
+  const consider = (px: number, pz: number, floor: number, halfWidth: number): void => {
+    if (feetY > floor + HEADROOM || feetY < floor - 2.5) return;
+    const distance = Math.hypot(x - px, z - pz);
+    if (distance > halfWidth + 2.5) return;
+    if (best && best.distance - best.halfWidth <= distance - halfWidth) return;
+    best = { distance, halfWidth, floor, x: px, z: pz };
+  };
+
+  for (const node of cave.nodes) consider(node.x, node.z, node.y, node.radius);
   for (const segment of cave.segments) {
     const a = cave.nodes[segment.from];
     const b = cave.nodes[segment.to];
@@ -276,8 +277,29 @@ export function insideCave(cave: Cave, x: number, z: number): boolean {
     const dz = b.z - a.z;
     const denominator = dx * dx + dz * dz || 1;
     const t = Math.max(0, Math.min(1, ((x - a.x) * dx + (z - a.z) * dz) / denominator));
-    const d = Math.hypot(x - (a.x + dx * t), z - (a.z + dz * t));
-    if (d < segment.halfWidth + 0.6) return true;
+    consider(a.x + dx * t, a.z + dz * t, a.y + (b.y - a.y) * t, segment.halfWidth);
   }
-  return false;
+  return best;
+}
+
+/** Внутри ли игрок пещеры — по этому гасится дневной свет. */
+export function insideCave(cave: Cave, x: number, z: number, feetY: number): boolean {
+  const hit = caveHitAt(cave, x, z, feetY);
+  return hit !== null && hit.distance < hit.halfWidth + 0.8;
+}
+
+/**
+ * Прижимает игрока к ходу. Стенами пещер раньше были круглые препятствия, но
+ * они не знают про высоту: тоннель под вершиной перекрывал дорогу к беседке.
+ * Теперь стена работает только для того, кто в самом ходу.
+ */
+export function clampToCave(cave: Cave, fromX: number, fromZ: number, x: number, z: number, feetY: number): [number, number] | null {
+  const was = caveHitAt(cave, fromX, fromZ, feetY);
+  if (!was || was.distance > was.halfWidth + 0.9) return null;
+  const now = caveHitAt(cave, x, z, feetY);
+  if (!now) return null;
+  const limit = now.halfWidth + 0.5;
+  if (now.distance <= limit) return [x, z];
+  const len = now.distance || 1;
+  return [now.x + ((x - now.x) / len) * limit, now.z + ((z - now.z) / len) * limit];
 }

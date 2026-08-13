@@ -35,6 +35,7 @@ export class Hud {
   private readonly weight = el('weight');
   private readonly resume = el('resume');
   private readonly slots = new Map<number, HTMLElement>();
+  private readonly pocket = new Map<string, HTMLElement>();
   private currentHint = '';
   private currentCarry = '';
   private currentQuest = '';
@@ -43,6 +44,17 @@ export class Hud {
     for (const node of document.querySelectorAll<HTMLElement>('.slot')) {
       this.slots.set(Number(node.dataset.slot), node);
     }
+    for (const node of document.querySelectorAll<HTMLElement>('.pocket')) {
+      this.pocket.set(node.dataset.k ?? '', node);
+    }
+  }
+
+  /**
+   * Что лежит в кармане само по себе, без клавиши: пока только зажигалка.
+   * Без неё не разжечь ни костёр, ни печь, и знать об этом надо заранее.
+   */
+  setPocket(inv: Inventory): void {
+    this.pocket.get('lighter')?.classList.toggle('hidden', !inv.hasLighter);
   }
 
   setVisible(visible: boolean): void {

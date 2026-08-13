@@ -19,6 +19,8 @@ export interface GorgeHit {
   nz: number;
   /** Сколько метров от входа: 0 — зев, 1 — глухой конец. */
   along: number;
+  /** То же в метрах: у самого зева стены отпускают, иначе из щели не выйти. */
+  metres: number;
 }
 
 /** Полная длина оси щели: считается один раз. */
@@ -40,9 +42,14 @@ export const CORRIDOR = GORGE.halfWidth + 0.45;
  * камень.
  */
 const ZONE = CORRIDOR + 0.7;
+/**
+ * Полоса у самого зева, где стены не держат. Без неё из щели не выйти:
+ * снаружи ближайшая точка оси — её начало, и прижим тянет игрока обратно.
+ */
+const MOUTH_FREE = 4.0;
 
 export function nearestGorgeAxis(x: number, z: number): GorgeHit {
-  let best: GorgeHit = { distance: Infinity, x, z, nx: 1, nz: 0, along: 0 };
+  let best: GorgeHit = { distance: Infinity, x, z, nx: 1, nz: 0, along: 0, metres: 0 };
   let travelled = 0;
   for (let i = 0; i < GORGE.path.length - 1; i++) {
     const [ax, az] = GORGE.path[i];
@@ -63,6 +70,7 @@ export function nearestGorgeAxis(x: number, z: number): GorgeHit {
         nx: (x - px) / len,
         nz: (z - pz) / len,
         along: (travelled + segment * t) / LENGTH,
+        metres: travelled + segment * t,
       };
     }
     travelled += segment;
@@ -74,7 +82,8 @@ export function nearestGorgeAxis(x: number, z: number): GorgeHit {
 export function insideGorge(x: number, z: number): boolean {
   // Грубая отсечка, чтобы не считать ломаную на каждом шаге по всей карте.
   if (x < -150 || x > -100 || z < 80 || z > 126) return false;
-  return nearestGorgeAxis(x, z).distance < ZONE;
+  const hit = nearestGorgeAxis(x, z);
+  return hit.distance < ZONE && hit.metres > MOUTH_FREE;
 }
 
 /**

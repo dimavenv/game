@@ -218,8 +218,9 @@ export function buildHut(hut: HutLayout): HutBuild {
   parts.push(...stoveBricks(hut.stove.x, y, hut.stove.z));
   parts.push(box(0.44, 2.6, 0.44, 0x5c3a30, hut.stove.x, y + 2.2, hut.stove.z));
   parts.push(box(0.5, 0.1, 0.5, 0x4a3028, hut.stove.x, y + 3.4, hut.stove.z));
-  // Устье: тёмный проём и чугунная плита сверху.
-  parts.push(box(0.52, 0.42, 0.08, 0x1a1512, hut.stove.x - 0.56, y + 0.5, hut.stove.z));
+  // Устье: тёмный проём и чугунная плита сверху. Проём смотрит на запад, к
+  // креслам, поэтому плита тонкая по X и широкая по Z — иначе торчит боком.
+  parts.push(box(0.08, 0.42, 0.52, 0x1a1512, hut.stove.x - 0.56, y + 0.5, hut.stove.z));
   parts.push(box(1.16, 0.06, 1.16, 0x3d3a36, hut.stove.x, y + 1.39, hut.stove.z));
 
   // Кресла.

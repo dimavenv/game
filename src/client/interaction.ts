@@ -182,15 +182,16 @@ export class Interactions {
       consider({ kind: 'chair', index: -1, hint: 'E — сесть', distance: chair, priority: 0 });
     }
 
-    // Петровна: имя над головой есть, разговора пока нет.
+    // Петровна: разговора с ней нет, но яблоко взять не откажется.
     const petrovna = near(this.points.petrovna, INTERACT.npcRange, 0.3);
     if (petrovna !== null) {
+      const apples = countItem(state.inventory, 'apple');
       consider({
         kind: 'petrovna',
         index: -1,
         name: 'Петровна',
         labelPoint: this.points.petrovna,
-        hint: 'Петровна смотрит на воду',
+        hint: apples > 0 ? 'E — угостить яблоком' : 'Петровна смотрит на воду',
         distance: petrovna,
         priority: 0,
       });

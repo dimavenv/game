@@ -23,6 +23,7 @@ import {
   WEAPONS,
   WORLD,
   WORLD_SEED,
+  ZOMBIE,
 } from '../shared/balance';
 import {
   ANIMAL_NAME,
@@ -96,6 +97,7 @@ import {
   damageZombie,
   findMeleeTarget,
   shotgunTargets,
+  spawnCaveZombies,
   spawnZombies,
   stepZombies,
   zombieCount,
@@ -268,9 +270,11 @@ export class Game {
   private readonly rockPoints: THREE.Vector3[] = [];
   private readonly wildVines: VineHandle[] = [];
   private readonly plantedVines = new Map<number, VineHandle>();
-  private readonly zombieView = new ZombieView(40);
+  private readonly zombieView = new ZombieView(44);
   private zombies: Zombie[] = [];
   private nextZombieId = 0;
+  /** В какие сутки будили обитателей каждой пещеры. */
+  private readonly caveZombieDay = new Map<number, number>();
 
   private readonly world: WorldData;
   private readonly player: PlayerState;
@@ -1054,6 +1058,9 @@ export class Game {
         this.toasts.push('Вся карта как на ладони');
         break;
       }
+      case 'petrovna':
+        this.treatPetrovna();
+        break;
       case 'swing':
         this.startSwing();
         break;
@@ -1442,12 +1449,18 @@ export class Game {
     if (dark) {
       this.spawnAvi();
       const count = zombieCount(this.clock.day);
-      this.zombies = spawnZombies(this.rng, this.world, count, this.player, this.nextZombieId);
+      // Пещерных ночь не касается: они и так там сидят.
+      const inCaves = this.zombies.filter((z) => z.cave !== undefined);
+      this.zombies = [
+        ...inCaves,
+        ...spawnZombies(this.rng, this.world, count, this.player, this.nextZombieId),
+      ];
       this.nextZombieId += count;
       this.audio.playSlot('night_start');
       this.toasts.push('Темнеет. В чаще кто-то ходит', 'bad');
     } else {
-      this.zombies = [];
+      // Рассвет разгоняет только лесную стаю — в пещере света не прибавилось.
+      this.zombies = this.zombies.filter((z) => z.cave !== undefined && z.state !== 'dying');
       this.zombieView.sync(this.zombies);
       this.despawnAvi();
       if (this.state.nightJob) {
@@ -1577,6 +1590,8 @@ export class Game {
     this.audio.death();
     this.zombies = [];
     this.zombieView.sync(this.zombies);
+    // Пещеры заселятся заново, когда игрок туда вернётся.
+    this.caveZombieDay.clear();
   }
 
   private respawn(): void {
@@ -1978,6 +1993,7 @@ export class Game {
     removeItem(inv, 'log', blueprint.logs);
     removeItem(inv, 'stone', blueprint.stones);
     if (blueprint.saplings) removeItem(inv, 'vine_sapling', blueprint.saplings);
+    if (blueprint.leather) removeItem(inv, 'leather', blueprint.leather);
 
     const structure: PlacedStructure = {
       id: this.state.world.nextStructureId++,
@@ -2811,15 +2827,17 @@ export class Game {
   private updateCaveLight(dt: number): void {
     let inside = false;
     for (const cave of this.world.caves) {
-      if (!insideCave(cave, this.player.x, this.player.z)) continue;
+      if (!insideCave(cave, this.player.x, this.player.z, this.player.feetY)) continue;
       inside = true;
       // Зашёл — пещера отметилась на карте.
       if (!this.state.world.cavesFound.includes(cave.id)) {
         this.state.world.cavesFound.push(cave.id);
         this.toasts.push(`Пещера ${cave.id + 1} нанесена на карту`, 'money');
       }
+      this.wakeCaveZombies(cave.id);
       break;
     }
+    this.despawnFarCaveZombies();
 
     // Памятник Серёге тоже надо сперва найти.
     if (!this.state.world.monumentFound) {
@@ -2832,6 +2850,34 @@ export class Game {
     // Плавно, иначе на входе свет щёлкает.
     this.caveDark += (Number(inside) - this.caveDark) * Math.min(1, dt * 2.2);
     this.sky.setCaveDark(this.caveDark);
+  }
+
+  /**
+   * Первый заход в пещеру за сутки будит её обитателей. Наружу они не выходят,
+   * поэтому спокойно живут в общем списке стаи — и ночью, и днём.
+   */
+  private wakeCaveZombies(id: number): void {
+    if (this.caveZombieDay.get(id) === this.clock.day) return;
+    this.caveZombieDay.set(id, this.clock.day);
+    const spawned = spawnCaveZombies(this.rng, this.world.caves[id], this.nextZombieId);
+    if (spawned.length === 0) return;
+    this.nextZombieId += spawned.length;
+    // Пещерные идут в начало списка: пул фигур ограничен, а ночная стая большая.
+    this.zombies.unshift(...spawned);
+    this.audio.playSlot('night_start');
+    this.toasts.push('В глубине кто-то шевелится', 'bad');
+  }
+
+  /** Ушёл далеко от зева — пещера пустеет, чтобы не считать её вечно. */
+  private despawnFarCaveZombies(): void {
+    if (this.zombies.length === 0) return;
+    const before = this.zombies.length;
+    this.zombies = this.zombies.filter((z) => {
+      if (z.cave === undefined) return true;
+      const mouth = this.world.caves[z.cave].mouth;
+      return Math.hypot(this.player.x - mouth.x, this.player.z - mouth.z) < ZOMBIE.cave.despawn;
+    });
+    if (this.zombies.length !== before) this.zombieView.sync(this.zombies);
   }
 
   /** Стадо: шаг поведения, голоса и удары кабана. */
@@ -2855,6 +2901,28 @@ export class Game {
       }
     }
     if (best) this.audio.animal(best.kind, bestD);
+  }
+
+  /**
+   * Яблоко Петровне. Награды за это нет и не будет — она просто берёт яблоко и
+   * говорит спасибо. Единственное, что меняется, — что именно она говорит.
+   */
+  private treatPetrovna(): void {
+    const inv = this.state.inventory;
+    if (removeItem(inv, 'apple', 1) === 0) {
+      this.toasts.push('Яблок нет. Петровна и так сидит', 'bad');
+      return;
+    }
+    const given = (this.state.world.petrovnaApples += 1);
+    const lines = [
+      'Петровна: спасибо, милый. Иди уже',
+      'Петровна: доброе яблоко. И озеро сегодня доброе',
+      'Петровна: ты всё ходишь. А я сижу',
+      'Петровна: четвёртое уже. Куда мне столько',
+      'Петровна: ну хватит, хватит. Себе оставь',
+    ];
+    this.toasts.push(lines[Math.min(given, lines.length) - 1]);
+    this.audio.bite();
   }
 
   /** Зверь упал. Мясо теперь не падает в рюкзак само — за ним нужен нож. */
@@ -3100,6 +3168,7 @@ export class Game {
     const inv = this.state.inventory;
     this.hud.setClock(this.clock.t, this.clock.day);
     this.hud.setPurse(inv);
+    this.hud.setPocket(inv);
     this.hud.setQuest(this.state.quest, this.state.quest ? questProgress(this.state.quest, this.state) : 0);
     this.hud.setHint(this.hintText());
     this.hud.setBreath(this.player.breath / this.breathMax());

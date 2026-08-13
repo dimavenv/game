@@ -145,6 +145,37 @@ body {
 }
 
 /* Голод, жажда и тепло: три полоски над строкой предметов */
+/* Карман: что лежит с собой само по себе, без слота под клавишей. */
+#pocket {
+  position: absolute;
+  right: 26px;
+  bottom: 74px;
+  display: flex;
+  gap: 8px;
+}
+
+.pocket {
+  display: flex;
+  gap: 7px;
+  align-items: baseline;
+  padding: 5px 11px;
+  font-size: 13px;
+  color: var(--dim);
+  background: rgba(8, 10, 12, 0.4);
+  border: 1px solid rgba(232, 226, 212, 0.16);
+  border-radius: 3px;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
+}
+
+.pocket.hidden {
+  display: none;
+}
+
+.pocket b {
+  font-size: 13px;
+  font-weight: normal;
+}
+
 #vitals {
   position: absolute;
   left: 26px;
@@ -754,6 +785,31 @@ body {
 
 .inv-grid-worn {
   grid-template-columns: repeat(3, 58px);
+}
+
+/* Снаряжение: две строки по четыре ячейки, чего нет — почти не видно. */
+.inv-grid-gear {
+  grid-template-columns: repeat(4, 44px);
+}
+
+.inv-grid-gear .inv-cell {
+  width: 44px;
+  height: 44px;
+  cursor: default;
+}
+
+.inv-grid-gear .inv-icon {
+  font-size: 20px;
+  line-height: 44px;
+}
+
+.inv-cell.empty-gear {
+  opacity: 0.22;
+}
+
+.inv-grid-gear .inv-cell.filled {
+  border-color: rgba(216, 189, 118, 0.55);
+  background: rgba(216, 189, 118, 0.09);
 }
 
 .inv-note {

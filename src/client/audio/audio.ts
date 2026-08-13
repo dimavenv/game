@@ -40,6 +40,8 @@ export class GameAudio {
   private aviVolume = 0;
   private musicTimer = 0;
   private musicStep = 0;
+  /** Громкость колонки Ави, когда музыку берут из файла, а не из синтеза. */
+  private aviMusicGain: GainNode | null = null;
   private slots: SoundSlots | null = null;
 
   get ready(): boolean {
@@ -481,9 +483,34 @@ export class GameAudio {
   /**
    * Тихая музыка из колонки Ави. Громкость задаётся расстоянием, поэтому
    * ночью его можно найти на слух.
+   *
+   * Если в public/sounds/ лежит avi_music.* — играет он, по кругу. Нет файла
+   * — играет синтезированная пентатоника, как раньше.
    */
   setAviMusic(volume: number): void {
     this.aviVolume = volume;
+    if (!this.ctx) return;
+
+    const track = this.slots?.buffer('avi_music') ?? null;
+    if (!track) return;
+
+    // Колонку запускаем один раз и больше не глушим: дальше ей правит громкость
+    // расстояние. Перезапуск с нуля на каждый подход рвал бы песню.
+    if (!this.aviMusicGain) {
+      if (volume <= 0.002) return;
+      const gain = this.ctx.createGain();
+      gain.gain.value = 0;
+      gain.connect(this.muffle);
+      const source = this.ctx.createBufferSource();
+      source.buffer = track;
+      source.loop = true;
+      source.connect(gain);
+      source.start();
+      this.aviMusicGain = gain;
+    }
+    // Синтез при живом файле не нужен.
+    this.aviVolume = 0;
+    this.aviMusicGain.gain.setTargetAtTime(volume * 0.55, this.ctx.currentTime, 0.25);
   }
 
   private musicNote(): void {

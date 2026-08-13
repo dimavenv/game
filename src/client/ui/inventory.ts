@@ -11,6 +11,21 @@ const WEARABLE: { id: ItemId; label: string; key: 'coat' | 'hat' | 'boots' }[] =
 ];
 
 /**
+ * Снаряжение на поясе: веса не занимает, в ячейки не кладётся, но знать, что
+ * оно есть, надо — особенно про зажигалку, без которой не разжечь костёр.
+ */
+const GEAR: { key: keyof Inventory; label: string; icon: string; missing: string }[] = [
+  { key: 'hasLighter', label: 'зажигалка', icon: '🔥', missing: 'зажигалки нет — костёр не разжечь' },
+  { key: 'hasKnife', label: 'нож', icon: '🔪', missing: 'ножа нет — тушу не разделать' },
+  { key: 'hasHammer', label: 'молот', icon: '🔨', missing: 'молота нет — строить нечем' },
+  { key: 'hasRod', label: 'удочка', icon: '🎣', missing: 'удочки нет' },
+  { key: 'hasShotgun', label: 'дробовик', icon: '🔫', missing: 'дробовика нет' },
+  { key: 'hasFlashlight', label: 'фонарик', icon: '🔋', missing: 'фонарика нет' },
+  { key: 'hasBinoculars', label: 'бинокль', icon: '🔭', missing: 'бинокля нет' },
+  { key: 'hasGoodAxe', label: 'хороший топор', icon: '🪓', missing: 'топор пока старый' },
+];
+
+/**
  * Рюкзак: сетка ячеек, вес и перекладывание мышью. Слева — то, что на игроке,
  * справа (если открыт сундук) — содержимое сундука.
  */
@@ -24,6 +39,8 @@ export class InventoryScreen {
   private readonly quickGrid: HTMLDivElement;
   private readonly wornGrid: HTMLDivElement;
   private readonly wornNote: HTMLDivElement;
+  private readonly gearGrid: HTMLDivElement;
+  private readonly gearNote: HTMLDivElement;
   /** Быстрые ячейки живут отдельными полями инвентаря, здесь их вид массивом. */
   private readonly quick: (ItemStack | null)[] = [null, null];
 
@@ -55,6 +72,11 @@ export class InventoryScreen {
               <div class="inv-grid inv-grid-worn"></div>
               <div class="inv-note"></div>
             </div>
+            <div class="inv-gear">
+              <div class="inv-title">На поясе</div>
+              <div class="inv-grid inv-grid-gear"></div>
+              <div class="inv-note"></div>
+            </div>
           </div>
         </div>
         <div class="inv-side inv-chest hidden">
@@ -73,6 +95,8 @@ export class InventoryScreen {
     this.quickGrid = this.root.querySelector('.inv-grid[data-side="quick"]')!;
     this.wornGrid = this.root.querySelector('.inv-grid-worn')!;
     this.wornNote = this.root.querySelector('.inv-worn .inv-note')!;
+    this.gearGrid = this.root.querySelector('.inv-grid-gear')!;
+    this.gearNote = this.root.querySelector('.inv-gear .inv-note')!;
   }
 
   get isOpen(): boolean {
@@ -231,12 +255,36 @@ export class InventoryScreen {
     this.wornNote.textContent = warm === WEARABLE.length ? 'Зима не страшна' : `Надето: ${warm}/${WEARABLE.length}`;
   }
 
+  /** Снаряжение: что куплено — светится, чего нет — серая ячейка. */
+  private renderGear(): void {
+    const inv = this.inventory;
+    if (!inv) return;
+    this.gearGrid.replaceChildren();
+    const missing: string[] = [];
+    for (const gear of GEAR) {
+      const owned = inv[gear.key] === true;
+      if (!owned) missing.push(gear.missing);
+      const cell = document.createElement('div');
+      cell.className = 'inv-cell';
+      cell.title = owned ? gear.label : `${gear.label}: нет`;
+      const icon = document.createElement('span');
+      icon.className = 'inv-icon';
+      icon.textContent = gear.icon;
+      cell.appendChild(icon);
+      if (owned) cell.classList.add('filled');
+      else cell.classList.add('empty-gear');
+      this.gearGrid.appendChild(cell);
+    }
+    this.gearNote.textContent = missing.length === 0 ? 'Всё при себе' : missing[0];
+  }
+
   render(): void {
     if (!this.inventory) return;
     this.pullQuick();
     this.renderGrid(this.leftGrid, 'bag', this.inventory.slots);
     this.renderGrid(this.quickGrid, 'quick', this.quick);
     this.renderWorn();
+    this.renderGear();
     if (this.chest) this.renderGrid(this.rightGrid, 'chest', this.chest);
 
     const weight = totalWeight(this.inventory);

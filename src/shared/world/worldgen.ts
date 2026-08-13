@@ -12,7 +12,7 @@ import {
   type HutLayout,
   type StallLayout,
 } from './buildings';
-import { caveWalls, cavePlatforms, generateCaves, type Cave } from './caves';
+import { cavePlatforms, generateCaves, type Cave } from './caves';
 import { ObstacleGrid, type Obstacle } from './grid';
 import { Terrain } from './terrain';
 
@@ -216,10 +216,9 @@ export function generateWorld(seedInput: string | number): WorldData {
   // Пещеры: пол настилами, стены — обычными препятствиями.
   const caves = generateCaves(toSeed(seed), terrain);
   const cavePlatformList: Platform[] = [];
-  for (const cave of caves) {
-    cavePlatformList.push(...cavePlatforms(cave));
-    for (const w of caveWalls(cave)) obstacles.add({ x: w.x, z: w.z, radius: w.radius, id: -1 });
-  }
+  // Стен-препятствий у пещер нет: они не знают про высоту и перекрывали бы
+  // дорогу по поверхности над тоннелем. Игрока держит в ходу clampToCave.
+  for (const cave of caves) cavePlatformList.push(...cavePlatforms(cave));
 
   return {
     seed,

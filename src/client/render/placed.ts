@@ -422,6 +422,20 @@ export class PlacedStructures {
 
   /** Показывает ровно столько шкур и воды, сколько лежит в постройке. */
   private updateContents(s: PlacedStructure, day: number): void {
+    // Костёр идёт первым: у него нет содержимого, только огонь, и проверка
+    // на содержимое ниже раньше выходила из метода до него — костёр не горел.
+    if (s.kind === 'campfire') {
+      const handle = this.fires.get(s.id);
+      if (handle) {
+        // Догорающий костёр слабеет, а не гаснет разом.
+        const left = s.fuel ?? 0;
+        const strength = left <= 0 ? 0 : Math.min(1, 0.5 + left / 500);
+        handle.fire.set(strength);
+        handle.light.intensity = strength * 7;
+      }
+      return;
+    }
+
     const items = this.contents.get(s.id);
     if (!items) return;
 
@@ -448,18 +462,6 @@ export class PlacedStructures {
       }
       // Больше пяти в кадре не показываем, но игроку об этом знать незачем.
       void shown;
-      return;
-    }
-
-    if (s.kind === 'campfire') {
-      const handle = this.fires.get(s.id);
-      if (handle) {
-        // Догорающий костёр слабеет, а не гаснет разом.
-        const left = s.fuel ?? 0;
-        const strength = left <= 0 ? 0 : Math.min(1, 0.35 + left / 400);
-        handle.fire.set(strength);
-        handle.light.intensity = strength * 6;
-      }
       return;
     }
 

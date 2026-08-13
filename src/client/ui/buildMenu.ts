@@ -61,7 +61,8 @@ export class BuildMenu {
     return (
       countItem(inv, 'log') >= blueprint.logs &&
       countItem(inv, 'stone') >= blueprint.stones &&
-      countItem(inv, 'vine_sapling') >= (blueprint.saplings ?? 0)
+      countItem(inv, 'vine_sapling') >= (blueprint.saplings ?? 0) &&
+      countItem(inv, 'leather') >= (blueprint.leather ?? 0)
     );
   }
 
@@ -83,6 +84,7 @@ export class BuildMenu {
       if (blueprint.logs > 0) parts.push(`брёвна ${blueprint.logs}`);
       if (blueprint.stones > 0) parts.push(`камни ${blueprint.stones}`);
       if (blueprint.saplings) parts.push(`саженцы ${blueprint.saplings}`);
+      if (blueprint.leather) parts.push(`кожа ${blueprint.leather}`);
       cost.textContent = parts.join(' · ');
 
       button.append(title, cost);

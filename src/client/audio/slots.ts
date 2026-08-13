@@ -24,6 +24,7 @@ export const SOUND_SLOTS: SlotSpec[] = [
   { name: 'avi_greet', description: 'Ави Загур заметил, что к нему подошли' },
   { name: 'avi_deal', description: 'Ави продал товар или принял вино' },
   { name: 'avi_job', description: 'Ави выдал поручение на ночь' },
+  { name: 'avi_music', description: 'Музыка из колонки Ави. Файл играет по кругу и подменяет синтез' },
   { name: 'drug_cocaine', description: 'Герой употребляет кокаин' },
   { name: 'drug_hash', description: 'Герой раскуривает гашиш' },
   { name: 'drug_heroin', description: 'Герой употребляет героин' },
@@ -108,6 +109,11 @@ export class SoundSlots {
 
   has(name: string): boolean {
     return this.buffers.has(name);
+  }
+
+  /** Первый вариант слота — для того, что играет по кругу (музыка Ави). */
+  buffer(name: string): AudioBuffer | null {
+    return this.buffers.get(name)?.[0] ?? null;
   }
 
   /** Играет случайный вариант. false — файла нет, зовите синтез. */
