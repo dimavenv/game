@@ -88,6 +88,7 @@ import {
   applesReady,
   createGameState,
   isBlessed,
+  isTreeDown,
   plantedVineReady,
   vineReady,
   type GameState,
@@ -106,6 +107,16 @@ import {
 import { campfirePosition, platformNear } from '../shared/world/buildings';
 import { Terrain } from '../shared/world/terrain';
 import { generateWorld, type WorldData } from '../shared/world/worldgen';
+import type { Actor } from '../shared/actors';
+import {
+  POSE,
+  type AnimalWire,
+  type WorldAction,
+  type WorldSnapshot,
+  type ZombieWire,
+} from '../shared/net/protocol';
+import { NetClient, serverUrl } from './net/client';
+import { RemotePlayers } from './render/players';
 import { GameAudio } from './audio/audio';
 import { aviAction, aviDialog, buravchikAction, buravchikDialog, tomerAction, tomerDialog } from './dialogs';
 import { Input } from './input';
@@ -119,7 +130,7 @@ import { CigaretteItem } from './items/cigarette';
 import { DrugKit } from './items/drugkit';
 import { RodItem } from './items/rod';
 import { ShotgunItem } from './items/shotgun';
-import { clearSave, loadGame, saveGame } from './save';
+import { applyPersonal, clearSave, loadGame, personalBlob, saveGame } from './save';
 import { Interactions, type InteractionPoints, type Target } from './interaction';
 import { createNpc, type NpcHandle } from './render/characters';
 import { Forest, TREE_HEIGHT } from './render/forest';
@@ -159,7 +170,7 @@ import { BuildMenu } from './ui/buildMenu';
 import { Dialog, type DialogSpec } from './ui/dialog';
 import { InventoryScreen } from './ui/inventory';
 import { Hud } from './ui/hud';
-import { Nameplate, Toasts } from './ui/labels';
+import { ChatInput, Nameplate, PlayerTags, Toasts } from './ui/labels';
 import { CheatMenu, type CheatApi, type FlagKey, type ToolKey } from './ui/cheats';
 
 const FIXED_DT = 1 / 60;
@@ -172,10 +183,26 @@ const SEAT_EYE = 1.12;
 
 type Slot = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
 
+/**
+ * Свой номер в списке действующих лиц. В одиночной игре он единственный, в
+ * сети сервер выдаёт настоящий id, но урон себе мы всё равно ищем по этому.
+ */
+const SELF_ID = 0;
+
 /** Подпись быстрой ячейки: иконка и остаток. */
 function quickLabel(stack: ItemStack | null): string {
   if (!stack) return '—';
   return `${ITEMS[stack.id].icon} ${stack.count}`;
+}
+
+/**
+ * Слепок постройки для сверки с сервером. Догорающие секунды выброшены: они
+ * убывают сами у всех, и гонять их по сети было бы бессмысленным трафиком.
+ */
+function structureEcho(structure: PlacedStructure): string {
+  return JSON.stringify(structure, (key, value) =>
+    key === 'fuel' || key === 'timer' ? undefined : (value as unknown),
+  );
 }
 
 /** Точка телепорта из чит-меню: где встать и куда смотреть. */
@@ -218,6 +245,8 @@ export class Game {
   private readonly hud = new Hud();
   private readonly dialog = new Dialog();
   private readonly nameplate = new Nameplate();
+  private readonly playerTags = new PlayerTags();
+  private readonly chat = new ChatInput();
   private readonly toasts = new Toasts();
 
   private readonly sky: Sky;
@@ -271,10 +300,18 @@ export class Game {
   private readonly wildVines: VineHandle[] = [];
   private readonly plantedVines = new Map<number, VineHandle>();
   private readonly zombieView = new ZombieView(44);
+  /** Сеть: null — играем в одиночку, как и раньше. */
+  private readonly net: NetClient | null;
+  private readonly remotes = new RemotePlayers();
+  /** Кого видят звери и мертвецы: я и все, кто рядом в лесу. */
+  private readonly actorList: Actor[] = [{ id: SELF_ID, x: 0, z: 0, yaw: 0 }];
   private zombies: Zombie[] = [];
   private nextZombieId = 0;
   /** В какие сутки будили обитателей каждой пещеры. */
   private readonly caveZombieDay = new Map<number, number>();
+  /** Слепки построек: по ним видно, что изменилось и что пора разослать. */
+  private readonly structureEcho = new Map<number, string>();
+  private structureSyncTimer = 0;
 
   private readonly world: WorldData;
   private readonly player: PlayerState;
@@ -581,6 +618,17 @@ export class Game {
         e.preventDefault();
         this.openMap();
       }
+      if ((e.code === 'Enter' || e.code === 'NumpadEnter') && this.net && !this.chat.isOpen) {
+        if (this.running && !this.dialog.isOpen && !this.inventoryScreen.isOpen && !this.mapScreen.isOpen) {
+          e.preventDefault();
+          document.exitPointerLock();
+          this.chat.open((text) => {
+            this.net?.sendChat(text);
+            this.toasts.push(`ты: ${text}`, 'money');
+            this.input.requestLock();
+          });
+        }
+      }
       if (e.code === 'Escape' && this.cheatMenu.isOpen) this.cheatMenu.close();
       if (e.code === 'Escape' && this.dialog.isOpen) this.dialog.close();
       if ((e.code === 'Escape' || e.code === 'Tab') && this.inventoryScreen.isOpen) {
@@ -624,6 +672,12 @@ export class Game {
       this.post = new PostFx(this.renderer, this.scene, this.camera, q);
     }
 
+    // Чужие фигуры добавляем всегда: пустая группа ничего не стоит.
+    this.scene.add(this.remotes.group);
+    const url = serverUrl();
+    // Подключаемся не здесь, а при входе в игру: в меню ещё вводят имя.
+    this.net = url ? new NetClient(url) : null;
+
     window.addEventListener('resize', () => this.resize());
     this.resize();
     this.syncCamera(0);
@@ -639,6 +693,7 @@ export class Game {
    */
   async start(pointerLock = true): Promise<void> {
     await this.audio.start();
+    if (this.net && !this.net.online) this.connect(this.net);
     if (pointerLock) {
       this.input.requestLock();
       return;
@@ -784,10 +839,18 @@ export class Game {
     this.updateDrugs(dt);
     this.updateAviAudio();
 
+    // Сеть: переподключение, чужие фигуры, своя поза и общие постройки.
+    this.net?.update(dt);
+    this.remotes.update(dt);
+    this.sendPose(dt);
+    this.syncStructures(dt);
+
     this.saveTimer -= dt;
     if (this.saveTimer <= 0) {
       this.saveTimer = 12;
       saveGame(this.state, this.clock, this.player);
+      // На сервере личный прогресс хранится там же, где мир: заходи откуда хочешь.
+      this.net?.sendProgress(personalBlob(this.state, this.player));
     }
 
     // Печь прогорает по игровому времени: у кресла дрова уходят быстрее.
@@ -905,19 +968,43 @@ export class Game {
     if (event === 'missed') this.toasts.push('Сорвалась', 'bad');
   }
 
+  /**
+   * Урон мертвецу. В сети стая живёт на сервере, поэтому туда уходит только
+   * заявка: кто и сколько ударил. Трофей вернётся отдельным сообщением —
+   * иначе двое, добившие одного, получили бы по зачёту каждый.
+   */
+  private hitZombie(zombie: Zombie, damage: number, stagger = true): void {
+    if (this.net?.online) {
+      this.net.sendHit({ t: 'zombie', id: zombie.id, damage, stagger });
+      // Отшатывание рисуем сразу: иначе удар кажется не попавшим.
+      if (stagger) zombie.stagger = 0.2;
+      return;
+    }
+    if (damageZombie(zombie, damage, stagger)) this.onZombieKilled();
+  }
+
+  /** То же для зверя. */
+  private hitAnimal(animal: Animal, damage: number): void {
+    if (this.net?.online) {
+      this.net.sendHit({ t: 'animal', id: animal.id, damage });
+      return;
+    }
+    if (damageAnimal(animal, damage)) this.harvest(animal);
+  }
+
   /** Топор бьёт в середине замаха: сперва проверяем зомби, потом ствол. */
   private applyAxeHit(): void {
     const base = this.state.inventory.hasGoodAxe ? WEAPONS.axe.goodDamage : WEAPONS.axe.damage;
     const damage = base * drugDamage(this.state.effects);
     const victim = findMeleeTarget(this.zombies, this.player, WEAPONS.axe.range, WEAPONS.axe.arc);
     if (victim) {
-      if (damageZombie(victim, damage)) this.onZombieKilled();
+      this.hitZombie(victim, damage);
       return;
     }
 
     const beast = findAnimalTarget(this.animals, this.player, WEAPONS.axe.range, WEAPONS.axe.arc);
     if (beast) {
-      if (damageAnimal(beast, damage)) this.harvest(beast);
+      this.hitAnimal(beast, damage);
       return;
     }
 
@@ -949,6 +1036,7 @@ export class Game {
       this.fellTree(id);
     }
     world.trees.set(id, mutation);
+    this.net?.sendWorld({ t: 'tree', index: id, hits: mutation.hits, choppedDay: mutation.choppedDay });
   }
 
   private fellTree(id: number): void {
@@ -986,6 +1074,8 @@ export class Game {
       this.chopEffects.removeStump(id);
       this.chopEffects.clearMark(id);
       this.state.world.trees.delete(id);
+      // Сервер сам ничего не отращивает — говорим ему, что здесь снова лес.
+      this.net?.sendWorld({ t: 'tree', index: id, hits: 0, choppedDay: null });
     }
 
     for (const [index, boulder] of this.state.world.boulders) {
@@ -994,11 +1084,15 @@ export class Game {
       this.forest.setPropVisible('rock', index, true);
       this.forest.resetRock(index);
       this.state.world.boulders.delete(index);
+      this.net?.sendWorld({ t: 'boulder', index, hits: 0, brokenDay: null });
     }
     for (const [index, takenDay] of this.state.world.pebbles) {
       if (day - takenDay < STONES.pebbleRegrowDays) continue;
       this.forest.setPropVisible('pebble', index, true);
       this.state.world.pebbles.delete(index);
+      // Отрицательный день = «камешек снова лежит»: отдельного слова в
+      // протоколе для этого не нужно, сравнение всё равно идёт по дню.
+      this.net?.sendWorld({ t: 'pebble', index, day: -99 });
     }
 
     this.toasts.push(`Настал день ${day}`);
@@ -1087,6 +1181,7 @@ export class Game {
       return;
     }
     this.state.world.appleTrees[index].pickedDay = this.clock.day;
+    this.net?.sendWorld({ t: 'apple', index, pickedDay: this.clock.day });
     this.appleTrees[index].setApples(false);
     this.audio.pickup();
     this.toasts.push(`Яблоки: +${count}`);
@@ -1099,6 +1194,7 @@ export class Game {
     }
     removeItem(this.state.inventory, 'log', 1);
     this.state.world.stoveFuel = Math.min(STOVE.maxFuel, this.state.world.stoveFuel + STOVE.secondsPerLog);
+    this.net?.sendWorld({ t: 'stove', fuel: this.state.world.stoveFuel });
     this.audio.stoke();
     this.toasts.push('Полено в топке');
   }
@@ -1440,11 +1536,109 @@ export class Game {
     }
   }
 
+  /**
+   * Пересобирает картинку мира под чужое состояние: сперва всё поднимаем и
+   * показываем, потом restoreWorldVisuals прячет то, что и правда срублено.
+   * Нужно при заходе на сервер — там лес уже пожили без нас.
+   */
+  private rebuildWorldVisuals(): void {
+    for (let id = 0; id < this.world.trees.length; id++) {
+      this.forest.setTreeVisible(id, true);
+      const obstacle = this.world.treeObstacles[id];
+      if (obstacle) obstacle.disabled = false;
+      this.chopEffects.removeStump(id);
+      this.chopEffects.clearMark(id);
+    }
+    for (let index = 0; index < this.world.rocks.length; index++) {
+      this.forest.setPropVisible('rock', index, true);
+      this.forest.resetRock(index);
+    }
+    for (let index = 0; index < this.world.pebbles.length; index++) {
+      this.forest.setPropVisible('pebble', index, true);
+    }
+    this.restoreWorldVisuals();
+  }
+
+  /** Дерево упало — у нас или у соседа: пень, обрушенный ствол, нет ствола. */
+  private dropTreeVisual(id: number): void {
+    const tree = this.world.trees[id];
+    if (!tree) return;
+    this.forest.setTreeVisible(id, false);
+    const obstacle = this.world.treeObstacles[id];
+    if (obstacle) obstacle.disabled = true;
+    this.chopEffects.clearMark(id);
+    this.chopEffects.addStump(id, tree.x, tree.y, tree.z, tree.scale);
+  }
+
+  /** На месте пня снова стоит дерево. */
+  private raiseTreeVisual(id: number): void {
+    this.forest.setTreeVisible(id, true);
+    const obstacle = this.world.treeObstacles[id];
+    if (obstacle) obstacle.disabled = false;
+    this.chopEffects.removeStump(id);
+    this.chopEffects.clearMark(id);
+  }
+
+  /**
+   * Постройка изменилась: в сундук положили, в сушилке повесили шкуру, в
+   * костёр подбросили полено. Шлём её целиком — их немного, а полей много.
+   */
+  private syncStructure(structure: PlacedStructure): void {
+    if (!this.net) return;
+    this.structureEcho.set(structure.id, structureEcho(structure));
+    this.net.sendWorld({ t: 'structure', structure });
+  }
+
+  /**
+   * Раз в секунду сверяем постройки со слепками и досылаем изменившиеся. Так
+   * не приходится помнить про сеть в каждом диалоге: сундук, бочки, сушилка и
+   * давильня разъезжаются максимум на секунду.
+   *
+   * Догорание в слепок не входит: и костёр, и печь тикают у всех одинаково.
+   */
+  private syncStructures(dt: number): void {
+    if (!this.net?.online) return;
+    this.structureSyncTimer -= dt;
+    if (this.structureSyncTimer > 0) return;
+    this.structureSyncTimer = 1;
+    for (const structure of this.state.world.structures) {
+      const echo = structureEcho(structure);
+      if (this.structureEcho.get(structure.id) === echo) continue;
+      this.structureEcho.set(structure.id, echo);
+      this.net.sendWorld({ t: 'structure', structure });
+    }
+  }
+
+  /** Личный прогресс, который сервер держал с прошлого захода. */
+  private loadProgress(blob: string): void {
+    if (!applyPersonal(this.state, this.player, blob)) return;
+    this.player.eyeY = this.world.terrain.height(this.player.x, this.player.z) + PLAYER.eyeHeight;
+    this.player.feetY = this.world.terrain.height(this.player.x, this.player.z);
+    this.buildMenu.render(this.state.inventory);
+  }
+
   /** Сумерки — стая выходит, рассвет — расходится. */
   private nightCycle(): void {
     const dark = isDark(this.clock.t);
     if (dark === this.wasDark) return;
     this.wasDark = dark;
+
+    // В сети стаю выводит сервер, здесь остаются Ави, звук и подсказки.
+    if (this.net?.online) {
+      if (dark) {
+        this.spawnAvi();
+        this.audio.playSlot('night_start');
+        this.toasts.push('Темнеет. В чаще кто-то ходит', 'bad');
+      } else {
+        this.despawnAvi();
+        if (this.state.nightJob) {
+          this.toasts.push('Поручение Ави сгорело с рассветом', 'bad');
+          this.state.nightJob = null;
+        }
+        this.toasts.push('Рассвело. Лес пуст');
+      }
+      return;
+    }
 
     if (dark) {
       this.spawnAvi();
@@ -1474,8 +1668,12 @@ export class Game {
   private updateZombies(dt: number): void {
     if (this.zombies.length === 0) return;
 
-    const hit = stepZombies(this.zombies, this.player, this.world, dt, this.rng);
-    if (hit.damage > 0 && !this.dying) this.takeDamage(hit.damage);
+    // В сети стаю двигает сервер, здесь остаются стоны и отрисовка.
+    if (!this.net?.online) {
+      const hit = stepZombies(this.zombies, this.actors(), this.world, dt, this.rng);
+      const mine = hit.damage.get(SELF_ID) ?? 0;
+      if (mine > 0 && !this.dying) this.takeDamage(mine);
+    }
 
     // Стоны: чем ближе стая, тем чаще.
     this.groanTimer -= dt;
@@ -1502,17 +1700,13 @@ export class Game {
   private fireShotgun(): void {
     this.audio.shotgun();
     const targets = shotgunTargets(this.zombies, this.player, WEAPONS.shotgun.range, WEAPONS.shotgun.spread);
-    let killed = 0;
-    for (const { zombie, damage } of targets) {
-      if (damageZombie(zombie, damage, false)) killed += 1;
-    }
-    for (let i = 0; i < killed; i++) this.onZombieKilled();
+    for (const { zombie, damage } of targets) this.hitZombie(zombie, damage, false);
 
     // Дробь достаётся и зверю: урон падает с дальностью.
     const beasts = shotAnimals(this.animals, this.player, WEAPONS.shotgun.range, WEAPONS.shotgun.spread);
     for (const { animal, damage } of beasts) {
       const dealt = WEAPONS.shotgun.farDamage + (WEAPONS.shotgun.nearDamage - WEAPONS.shotgun.farDamage) * damage;
-      if (damageAnimal(animal, dealt)) this.harvest(animal);
+      this.hitAnimal(animal, dealt);
     }
 
     if (targets.length === 0 && beasts.length === 0) this.toasts.push('Мимо', 'bad');
@@ -1840,6 +2034,8 @@ export class Game {
   /** Сохранить прямо сейчас: нужно перед перезагрузкой страницы. */
   saveNow(): void {
     saveGame(this.state, this.clock, this.player);
+    // На сервере лежит та же личная половина: сохраняем и её.
+    this.net?.sendProgress(personalBlob(this.state, this.player));
   }
 
   /** Полностью новая партия: чистим сохранение и перезапускаем страницу. */
@@ -1853,7 +2049,7 @@ export class Game {
   private applyHammerHit(): void {
     const victim = findMeleeTarget(this.zombies, this.player, WEAPONS.axe.range, WEAPONS.axe.arc);
     if (victim) {
-      if (damageZombie(victim, WEAPONS.axe.damage * 0.8)) this.onZombieKilled();
+      this.hitZombie(victim, WEAPONS.axe.damage * 0.8);
       return;
     }
 
@@ -1882,6 +2078,7 @@ export class Game {
       this.audio.treeFall();
     }
     boulders.set(index, boulder);
+    this.net?.sendWorld({ t: 'boulder', index, hits: boulder.hits, brokenDay: boulder.brokenDay });
   }
 
   private pickPebble(index: number): void {
@@ -1890,6 +2087,7 @@ export class Game {
       return;
     }
     this.state.world.pebbles.set(index, this.clock.day);
+    this.net?.sendWorld({ t: 'pebble', index, day: this.clock.day });
     this.forest.setPropVisible('pebble', index, false);
     this.audio.pickup();
     this.toasts.push('Камень: +1');
@@ -1909,10 +2107,15 @@ export class Game {
     if (!chest) return;
     if (!chest.storage) chest.storage = Array.from({ length: CHEST_SLOTS }, () => null);
     document.exitPointerLock();
-    this.inventoryScreen.open(this.state.inventory, () => this.resumeAfterUi(), {
-      title: 'Сундук',
-      slots: chest.storage,
-    });
+    this.inventoryScreen.open(
+      this.state.inventory,
+      () => {
+        // Что переложили — узнают все: сундук общий.
+        this.syncStructure(chest);
+        this.resumeAfterUi();
+      },
+      { title: 'Сундук', slots: chest.storage },
+    );
   }
 
   private toggleBuildMode(): void {
@@ -2011,6 +2214,7 @@ export class Game {
     if (this.buildKind === 'vine') structure.pickedDay = null;
     this.state.world.structures.push(structure);
     this.registerStructureCollider(structure);
+    this.net?.sendWorld({ t: 'structure', structure });
 
     this.audio.chop();
     this.toasts.push(`Построено: ${blueprint.name}`);
@@ -2039,6 +2243,7 @@ export class Game {
       return;
     }
     this.state.world.vines.set(index, this.clock.day);
+    this.net?.sendWorld({ t: 'vine', index, day: this.clock.day });
     this.wildVines[index]?.setGrapes(false);
     this.audio.pickup();
     this.toasts.push(`Грозди: +${count - left}`);
@@ -2086,6 +2291,7 @@ export class Game {
         return;
       }
       structure.fuel = CAMPFIRE.burnSeconds;
+      this.syncStructure(structure);
       this.audio.stoke();
       this.toasts.push('Костёр занялся. К утру прогорит');
       return;
@@ -2097,6 +2303,7 @@ export class Game {
     }
     removeItem(inv, 'log', 1);
     structure.fuel = (structure.fuel ?? 0) + CAMPFIRE.logSeconds;
+    this.syncStructure(structure);
     this.audio.stoke();
     this.toasts.push('Подбросил дров');
   }
@@ -2312,6 +2519,7 @@ export class Game {
       return;
     }
     structure.pickedDay = this.clock.day;
+    this.syncStructure(structure);
     this.plantedVines.get(structure.id)?.setGrapes(false);
     this.audio.pickup();
     this.toasts.push(`Грозди: +${count - left}`);
@@ -2412,6 +2620,7 @@ export class Game {
         removeItem(inv, 'must', WINE.mustPerBarrel);
         structure.barrels = structure.barrels ?? [];
         structure.barrels.push({ amount: WINE.bottlesPerBarrel, startedDay: this.clock.day });
+        this.syncStructure(structure);
         this.toasts.push('Сусло в бочке. Теперь ждать');
         this.audio.stoke();
         return false;
@@ -2426,6 +2635,7 @@ export class Game {
         removeItem(inv, 'bottle_empty', barrel.amount);
         const left = addItem(inv, wineItem(grade), barrel.amount);
         structure.barrels!.splice(index, 1);
+        this.syncStructure(structure);
         this.toasts.push(`Разлито: ${GRADE_LABEL[grade]} × ${barrel.amount - left}`, 'money');
         this.audio.coins();
         return false;
@@ -2824,6 +3034,232 @@ export class Game {
   }
 
   /** В пещере темно: дневной свет гаснет, а туман придвигается вплотную. */
+  // --- Сеть ---------------------------------------------------------------
+
+  /** Подписывается на сервер. Всё, что приходит, ложится в тот же state. */
+  private connect(net: NetClient): void {
+    net.connect({
+      onStatus: (text, kind) => this.toasts.push(text, kind),
+      onWelcome: (message) => {
+        this.clock.day = message.day;
+        this.clock.t = message.time;
+        // Мир общий: то, что уже нарубили и построили до нас, применяем разом.
+        this.applyWorldSnapshot(message.world);
+        this.remotes.clear();
+        for (const player of message.players) this.remotes.add(player);
+        // Стая и стадо теперь считаются на сервере, свои — на выброс.
+        this.zombies = [];
+        this.zombieView.sync(this.zombies);
+        if (message.progress) this.loadProgress(message.progress);
+        this.toasts.push(
+          message.players.length > 0
+            ? `В лесу уже есть: ${message.players.map((p) => p.name).join(', ')}`
+            : 'Ты в лесу один. Пока что',
+          'money',
+        );
+      },
+      onState: (message) => {
+        this.clock.day = message.day;
+        // Время подтягиваем мягко: рывок в полсекунды заметен по теням.
+        this.clock.t += (message.time - this.clock.t) * 0.25;
+        this.remotes.sync(message.players);
+        this.applyAnimalWire(message.animals);
+        this.applyZombieWire(message.zombies);
+      },
+      onWorld: (action) => this.applyRemoteAction(action),
+      onJoin: (player) => {
+        this.remotes.add(player);
+        this.toasts.push(`${player.name} пришёл в лес`, 'money');
+      },
+      onLeave: (id, name) => {
+        this.remotes.remove(id);
+        this.toasts.push(`${name} ушёл`);
+      },
+      onHurt: (amount) => {
+        if (!this.dying) this.takeDamage(amount);
+      },
+      onKilled: (kind, id) => {
+        if (kind === 'zombie') {
+          this.onZombieKilled();
+          return;
+        }
+        const beast = this.animals.find((a) => a.id === id);
+        if (beast) this.harvest(beast);
+      },
+      onChat: (name, text) => this.toasts.push(`${name}: ${text}`, 'money'),
+    });
+  }
+
+  /** Я и все, кто сейчас в лесу: по этому списку ходят звери и мертвецы. */
+  private actors(): Actor[] {
+    this.actorList.length = 0;
+    this.actorList.push({ id: SELF_ID, x: this.player.x, z: this.player.z, yaw: this.player.yaw });
+    for (const other of this.remotes.all) {
+      this.actorList.push({ id: other.id, x: other.point.x, z: other.point.z, yaw: 0 });
+    }
+    return this.actorList;
+  }
+
+  /** Что о себе рассказывать серверу: поза, а не внутренности. */
+  private sendPose(dt: number): void {
+    const net = this.net;
+    if (!net) return;
+    let flags = 0;
+    if (this.seat) flags |= POSE.sit;
+    if (this.world.terrain.depth(this.player.x, this.player.z) > 0.3) flags |= POSE.swim;
+    if (this.dying) flags |= POSE.dead;
+    net.sendMove(dt, {
+      x: this.player.x,
+      y: this.player.feetY,
+      z: this.player.z,
+      yaw: this.player.yaw,
+      pitch: this.player.pitch,
+      speed: this.player.speed,
+      slot: this.slot,
+      flags,
+      health: Math.round(this.player.health),
+    });
+  }
+
+  /** Общее состояние мира при заходе: деревья, яблони, постройки. */
+  private applyWorldSnapshot(snapshot: WorldSnapshot): void {
+    const world = this.state.world;
+    world.trees.clear();
+    world.boulders.clear();
+    world.pebbles.clear();
+    world.vines.clear();
+    for (const [index, hits, choppedDay] of snapshot.trees) world.trees.set(index, { hits, choppedDay });
+    for (const [index, pickedDay] of snapshot.apples) {
+      if (world.appleTrees[index]) world.appleTrees[index].pickedDay = pickedDay;
+    }
+    for (const [index, hits, brokenDay] of snapshot.boulders) world.boulders.set(index, { hits, brokenDay });
+    for (const [index, day] of snapshot.pebbles) world.pebbles.set(index, day);
+    for (const [index, day] of snapshot.vines) world.vines.set(index, day);
+    world.stoveFuel = snapshot.stoveFuel;
+    world.nextStructureId = Math.max(world.nextStructureId, snapshot.nextStructureId);
+
+    // Постройки пересобираем целиком: чужие приходят вместе со своим добром.
+    world.structures.length = 0;
+    for (const structure of snapshot.structures) {
+      world.structures.push(structure);
+      this.registerStructureCollider(structure);
+    }
+    this.rebuildWorldVisuals();
+  }
+
+  /** Чужая мутация мира: применяем у себя и повторяем те же последствия. */
+  private applyRemoteAction(action: WorldAction): void {
+    const world = this.state.world;
+    switch (action.t) {
+      case 'tree': {
+        const wasDown = isTreeDown(this.state, action.index, this.clock.day, CHOP.regrowDays);
+        world.trees.set(action.index, { hits: action.hits, choppedDay: action.choppedDay });
+        const down = action.choppedDay !== null;
+        if (down && !wasDown) this.dropTreeVisual(action.index);
+        if (!down && wasDown) this.raiseTreeVisual(action.index);
+        break;
+      }
+      case 'apple':
+        if (world.appleTrees[action.index]) world.appleTrees[action.index].pickedDay = action.pickedDay;
+        break;
+      case 'boulder': {
+        world.boulders.set(action.index, { hits: action.hits, brokenDay: action.brokenDay });
+        if (action.brokenDay !== null) this.forest.setPropVisible('rock', action.index, false);
+        else this.forest.setPropVisible('rock', action.index, true);
+        break;
+      }
+      case 'pebble':
+        world.pebbles.set(action.index, action.day);
+        this.forest.setPropVisible('pebble', action.index, false);
+        break;
+      case 'vine':
+        world.vines.set(action.index, action.day);
+        this.wildVines[action.index]?.setGrapes(false);
+        break;
+      case 'structure': {
+        this.structureEcho.set(action.structure.id, structureEcho(action.structure));
+        const index = world.structures.findIndex((s) => s.id === action.structure.id);
+        if (index >= 0) world.structures[index] = action.structure;
+        else {
+          world.structures.push(action.structure);
+          this.registerStructureCollider(action.structure);
+        }
+        world.nextStructureId = Math.max(world.nextStructureId, action.structure.id + 1);
+        break;
+      }
+      case 'structureGone': {
+        const index = world.structures.findIndex((s) => s.id === action.id);
+        if (index >= 0) world.structures.splice(index, 1);
+        break;
+      }
+      case 'stove':
+        world.stoveFuel = action.fuel;
+        break;
+      default:
+        break;
+    }
+  }
+
+  /** Стадо с сервера: свои звери остаются теми же объектами, меняются поля. */
+  private applyAnimalWire(wire: AnimalWire[]): void {
+    for (const w of wire) {
+      const animal = this.animals.find((a) => a.id === w.i);
+      if (!animal) continue;
+      animal.x = w.x;
+      animal.y = w.y;
+      animal.z = w.z;
+      animal.yaw = w.r;
+      animal.state = w.s;
+      animal.speed = w.v;
+      animal.butchered = w.b;
+      // Фазу шага крутим сами: она нужна только для ног.
+      if (w.s === 'dead') animal.deadFor = Math.max(animal.deadFor, 0.1);
+      else animal.deadFor = 0;
+    }
+  }
+
+  /** Стая с сервера: кого нет в снимке — того больше нет. */
+  private applyZombieWire(wire: ZombieWire[]): void {
+    const alive = new Set<number>();
+    for (const w of wire) {
+      alive.add(w.i);
+      let zombie = this.zombies.find((z) => z.id === w.i);
+      if (!zombie) {
+        zombie = {
+          id: w.i,
+          x: w.x,
+          z: w.z,
+          y: w.y,
+          yaw: w.r,
+          health: ZOMBIE.health,
+          state: w.s,
+          goalX: w.x,
+          goalZ: w.z,
+          goalTimer: 0,
+          attackTimer: 0,
+          stagger: 0,
+          deadFor: w.d,
+          phase: Math.random() * 6,
+        };
+        if (w.c !== undefined) zombie.cave = w.c;
+        this.zombies.push(zombie);
+      }
+      // Между снимками фигура доезжает сама — рывками ковылять некрасиво.
+      const far = Math.hypot(zombie.x - w.x, zombie.z - w.z) > 6;
+      zombie.x = far ? w.x : zombie.x + (w.x - zombie.x) * 0.5;
+      zombie.z = far ? w.z : zombie.z + (w.z - zombie.z) * 0.5;
+      zombie.y = w.y;
+      zombie.yaw = w.r;
+      zombie.state = w.s;
+      zombie.deadFor = w.d;
+      zombie.phase += 0.08;
+    }
+    if (this.zombies.length !== alive.size) {
+      this.zombies = this.zombies.filter((z) => alive.has(z.id));
+    }
+    this.zombieView.sync(this.zombies);
+  }
+
   private updateCaveLight(dt: number): void {
     let inside = false;
     for (const cave of this.world.caves) {
@@ -2857,6 +3293,7 @@ export class Game {
    * поэтому спокойно живут в общем списке стаи — и ночью, и днём.
    */
   private wakeCaveZombies(id: number): void {
+    if (this.net?.online) return;
     if (this.caveZombieDay.get(id) === this.clock.day) return;
     this.caveZombieDay.set(id, this.clock.day);
     const spawned = spawnCaveZombies(this.rng, this.world.caves[id], this.nextZombieId);
@@ -2871,6 +3308,7 @@ export class Game {
 
   /** Ушёл далеко от зева — пещера пустеет, чтобы не считать её вечно. */
   private despawnFarCaveZombies(): void {
+    if (this.net?.online) return;
     // Сначала смотрим, есть ли кого убирать: метод зовётся каждый кадр.
     const near = (z: Zombie): boolean => {
       if (z.cave === undefined) return true;
@@ -2884,8 +3322,12 @@ export class Game {
 
   /** Стадо: шаг поведения, голоса и удары кабана. */
   private updateAnimals(dt: number): void {
-    const hit = stepAnimals(this.animals, this.player, this.world, dt, this.rng);
-    if (hit.damage > 0 && !this.dying) this.takeDamage(hit.damage);
+    // В сети стадо считает сервер, здесь остаются только голоса и отрисовка.
+    if (!this.net?.online) {
+      const hit = stepAnimals(this.animals, this.actors(), this.world, dt, this.rng);
+      const mine = hit.damage.get(SELF_ID) ?? 0;
+      if (mine > 0 && !this.dying) this.takeDamage(mine);
+    }
     this.animalsView.sync(this.animals, this.camera.position.x, this.camera.position.z);
 
     // Кто-нибудь поблизости время от времени подаёт голос.
@@ -3047,6 +3489,7 @@ export class Game {
   private finishButcher(animal: Animal): void {
     if (animal.butchered) return;
     animal.butchered = true;
+    this.net?.sendHit({ t: 'animalButcher', id: animal.id });
     const meat = ANIMALS[animal.kind].meat;
     const hides = CRAFT.hides[animal.kind];
     const meatLeft = addItem(this.state.inventory, 'meat', meat);
@@ -3214,5 +3657,8 @@ export class Game {
     } else {
       this.nameplate.hide();
     }
+
+    // Ники товарищей видно всегда: в одинаковом лесу иначе не встретиться.
+    this.playerTags.sync(this.remotes.all, this.camera, this.camera.position);
   }
 }

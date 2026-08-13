@@ -3,6 +3,7 @@ import { Game } from './client/game';
 import { Intro } from './client/ui/intro';
 import { CheatMenu } from './client/ui/cheats';
 import { QUALITY, QUALITY_ORDER, loadQuality, saveQuality } from './client/quality';
+import { playerName, serverUrl, setPlayerName } from './client/net/client';
 
 const canvas = document.getElementById('game') as HTMLCanvasElement;
 const menu = document.getElementById('menu') as HTMLDivElement;
@@ -14,6 +15,17 @@ const cheatOpen = document.getElementById('cheat-open') as HTMLButtonElement;
 const cheatGate = document.getElementById('cheat-gate') as HTMLDivElement;
 const cheatPassword = document.getElementById('cheat-password') as HTMLInputElement;
 const cheatEnter = document.getElementById('cheat-enter') as HTMLButtonElement;
+
+const nickBox = document.getElementById('nickbox') as HTMLDivElement;
+const nick = document.getElementById('nick') as HTMLInputElement;
+
+// Поле ника нужно только там, где есть сервер: в одиночной игре оно ни к чему.
+const online = serverUrl() !== null;
+if (online) {
+  nickBox.classList.remove('hidden');
+  nick.value = playerName();
+  nick.addEventListener('input', () => setPlayerName(nick.value.trim()));
+}
 
 const game = new Game(canvas);
 const intro = new Intro();
@@ -61,6 +73,7 @@ restart.addEventListener('click', () => {
 });
 
 play.addEventListener('click', () => {
+  if (online) setPlayerName(nick.value.trim() || 'Прохожий');
   menu.classList.add('hidden');
   void game.start(pointerLock);
 });

@@ -1,3 +1,4 @@
+import { addDamage, nearestActor, type Actor, type DamageMap } from './actors';
 import { WEAPONS, WORLD, ZOMBIE } from './balance';
 import type { PlayerState } from './movement';
 import { clamp } from './rng';
@@ -30,8 +31,8 @@ export interface Zombie {
 }
 
 export interface ZombieHit {
-  /** Урон, который зомби нанёс игроку за этот шаг. */
-  damage: number;
+  /** Урон, который стая нанесла за этот шаг, по игрокам. */
+  damage: DamageMap;
 }
 
 function distanceToClearing(x: number, z: number): number {
@@ -51,7 +52,7 @@ export function spawnZombies(
   rng: () => number,
   world: WorldData,
   count: number,
-  player: PlayerState,
+  player: { x: number; z: number },
   startId: number,
 ): Zombie[] {
   const out: Zombie[] = [];
@@ -171,13 +172,12 @@ function slide(world: WorldData, z: Zombie, nx: number, nz: number): void {
  */
 export function stepZombies(
   zombies: Zombie[],
-  player: PlayerState,
+  actors: readonly Actor[],
   world: WorldData,
   dt: number,
   rng: () => number,
 ): ZombieHit {
-  let damage = 0;
-  const onClearing = distanceToClearing(player.x, player.z) < ZOMBIE.safeRadius;
+  const damage: DamageMap = new Map();
 
   for (const z of zombies) {
     if (z.state === 'dying') {
@@ -193,11 +193,16 @@ export function stepZombies(
 
     // Пещерному поляна не убежище: он про неё и не знает, он сидит в горе.
     const cave = z.cave === undefined ? null : world.caves[z.cave] ?? null;
-    const playerSafe = cave ? false : onClearing;
+
+    // Гонится за ближайшим: с двумя игроками стая делится сама собой.
+    const near = nearestActor(actors, z.x, z.z);
+    if (!near) continue;
+    const player = near.actor;
+    const playerSafe = cave ? false : distanceToClearing(player.x, player.z) < ZOMBIE.safeRadius;
 
     const dx = player.x - z.x;
     const dz = player.z - z.z;
-    const distance = Math.hypot(dx, dz);
+    const distance = near.distance;
 
     // На поляне игрока не преследуют — там их просто нет.
     const canChase = !playerSafe && distance < ZOMBIE.sightRange;
@@ -214,7 +219,7 @@ export function stepZombies(
         z.attackTimer -= dt;
         if (z.attackTimer <= 0) {
           z.attackTimer = ZOMBIE.attackCooldown;
-          damage += ZOMBIE.damage;
+          addDamage(damage, player.id, ZOMBIE.damage);
         }
       } else {
         z.state = 'chase';

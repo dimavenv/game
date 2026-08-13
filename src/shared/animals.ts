@@ -1,3 +1,4 @@
+import { addDamage, nearestActor, type Actor, type DamageMap } from './actors';
 import { ANIMALS, WORLD, ZOMBIE } from './balance';
 import type { PlayerState } from './movement';
 import { clamp } from './rng';
@@ -160,42 +161,51 @@ function revive(a: Animal, terrain: Terrain, rng: () => number): void {
 }
 
 export interface AnimalStep {
-  /** Урон, который кабаны успели нанести за этот кадр. */
-  damage: number;
+  /** Урон, который кабаны успели нанести за этот кадр, по игрокам. */
+  damage: DamageMap;
 }
 
+/**
+ * Шаг стада. Зверь реагирует на ближайшего человека: в одиночной игре это
+ * единственный игрок, на сервере — тот, кто ближе всех подошёл.
+ */
 export function stepAnimals(
   animals: Animal[],
-  player: PlayerState,
+  actors: readonly Actor[],
   world: WorldData,
   dt: number,
   rng: () => number,
 ): AnimalStep {
-  let damage = 0;
+  const damage: DamageMap = new Map();
   const terrain = world.terrain;
 
   for (const a of animals) {
     if (a.state === 'dead') {
       a.deadFor += dt;
       a.speed = 0;
+      const watcher = nearestActor(actors, a.homeX, a.homeZ);
+      const away = watcher ? watcher.distance : Infinity;
       // Разделанную тушу убираем сразу: брать с неё уже нечего.
       if (a.butchered) {
-        const awayFromPlayer = Math.hypot(a.homeX - player.x, a.homeZ - player.z);
-        if (awayFromPlayer > ANIMALS.respawnAway) revive(a, world.terrain, rng);
+        if (away > ANIMALS.respawnAway) revive(a, world.terrain, rng);
         continue;
       }
       // Целая туша лежит своё, потом лес тихо возвращает зверя — но не на глазах.
-      if (a.deadFor > ANIMALS.respawn) {
-        const away = Math.hypot(a.homeX - player.x, a.homeZ - player.z);
-        if (away > ANIMALS.respawnAway) revive(a, world.terrain, rng);
-      }
+      if (a.deadFor > ANIMALS.respawn && away > ANIMALS.respawnAway) revive(a, world.terrain, rng);
       continue;
     }
+
+    const near = nearestActor(actors, a.x, a.z);
+    if (!near) {
+      a.speed = 0;
+      continue;
+    }
+    const player = near.actor;
 
     const s = spec(a.kind);
     const dx = player.x - a.x;
     const dz = player.z - a.z;
-    const toPlayer = Math.hypot(dx, dz);
+    const toPlayer = near.distance;
     // Далёкие звери шевелятся вполсилы: считать всю карту незачем.
     if (toPlayer > ANIMALS.simulateRange) {
       a.speed = 0;
@@ -252,7 +262,7 @@ export function stepAnimals(
       wishZ = dz / len;
       speed = toPlayer > 2 ? s.run : s.walk;
       if (toPlayer < 1.8 && a.attackTimer <= 0) {
-        damage += s.damage;
+        addDamage(damage, player.id, s.damage);
         a.attackTimer = s.cooldown;
       }
       // Долго гоняться не станет: отбежал — и хватит.
@@ -299,7 +309,8 @@ export function stepAnimals(
     a.y = a.kind === 'duck' ? WORLD.waterLevel : terrain.height(a.x, a.z);
   }
 
-  return { damage: clamp(damage, 0, 100) };
+  for (const [id, amount] of damage) damage.set(id, clamp(amount, 0, 100));
+  return { damage };
 }
 
 /** Урон зверю. true — добит. */

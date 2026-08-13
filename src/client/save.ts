@@ -156,3 +156,90 @@ export function hasSave(): boolean {
     return false;
   }
 }
+
+/**
+ * Личная половина прогресса — то, что на сервере принадлежит одному игроку:
+ * рюкзак, здоровье, квесты и найденные места. Мир (деревья, постройки, печь)
+ * сюда не входит: он общий и живёт на сервере.
+ */
+interface PersonalData {
+  version: number;
+  inventory: Inventory;
+  quest: ActiveQuest | null;
+  questsDone: number;
+  nightJob: NightJob | null;
+  effects: DrugEffects;
+  cavesFound: number[];
+  monumentFound: boolean;
+  thrushDay: number;
+  petrovnaApples: number;
+  lightUpDay: number;
+  tributeDay: number;
+  blessedUntilDay: number;
+  player: { x: number; z: number; yaw: number; health: number; hunger: number; thirst: number; warmth: number };
+}
+
+export function personalBlob(state: GameState, player: PlayerState): string {
+  const data: PersonalData = {
+    version: VERSION,
+    inventory: state.inventory,
+    quest: state.quest,
+    questsDone: state.questsDone,
+    nightJob: state.nightJob,
+    effects: state.effects,
+    cavesFound: state.world.cavesFound,
+    monumentFound: state.world.monumentFound,
+    thrushDay: state.world.thrushDay,
+    petrovnaApples: state.world.petrovnaApples,
+    lightUpDay: state.world.lightUpDay,
+    tributeDay: state.world.tributeDay,
+    blessedUntilDay: state.world.blessedUntilDay,
+    player: {
+      x: player.x,
+      z: player.z,
+      yaw: player.yaw,
+      health: player.health,
+      hunger: player.hunger,
+      thirst: player.thirst,
+      warmth: player.warmth,
+    },
+  };
+  return JSON.stringify(data);
+}
+
+/** Возвращает false, если сервер помнит прогресс от другой версии игры. */
+export function applyPersonal(state: GameState, player: PlayerState, blob: string): boolean {
+  let data: PersonalData;
+  try {
+    data = JSON.parse(blob) as PersonalData;
+  } catch {
+    return false;
+  }
+  if (data.version !== VERSION) return false;
+
+  Object.assign(state.inventory, data.inventory);
+  state.quest = data.quest;
+  state.questsDone = data.questsDone ?? 0;
+  state.nightJob = data.nightJob ?? null;
+  const effects = data.effects ?? createDrugEffects();
+  state.effects.after = effects.after ?? null;
+  state.effects.tremor = 0;
+  state.effects.painDebt = 0;
+  state.effects.active = null;
+  state.world.cavesFound = data.cavesFound ?? [];
+  state.world.monumentFound = data.monumentFound ?? false;
+  state.world.thrushDay = data.thrushDay ?? -99;
+  state.world.petrovnaApples = data.petrovnaApples ?? 0;
+  state.world.lightUpDay = data.lightUpDay ?? -99;
+  state.world.tributeDay = data.tributeDay ?? -99;
+  state.world.blessedUntilDay = data.blessedUntilDay ?? -99;
+
+  player.x = data.player.x;
+  player.z = data.player.z;
+  player.yaw = data.player.yaw;
+  player.health = data.player.health;
+  player.hunger = data.player.hunger ?? player.hunger;
+  player.thirst = data.player.thirst ?? player.thirst;
+  player.warmth = data.player.warmth ?? player.warmth;
+  return true;
+}

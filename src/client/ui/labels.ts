@@ -54,3 +54,105 @@ export class Toasts {
     window.setTimeout(() => el.remove(), 3400);
   }
 }
+
+/**
+ * Ники живых игроков: висят над головами всегда, а не только когда смотришь.
+ * В лесу товарища иначе не найти — деревья одинаковые, ориентиров мало.
+ */
+export class PlayerTags {
+  private readonly root: HTMLDivElement;
+  private readonly tags = new Map<number, HTMLDivElement>();
+
+  constructor() {
+    this.root = document.createElement('div');
+    this.root.id = 'tags';
+    this.root.className = 'overlay';
+    document.body.appendChild(this.root);
+  }
+
+  /** Обновляет подписи. Кто пропал из списка — у того подпись убирается. */
+  sync(
+    people: { id: number; name: string; point: THREE.Vector3; health: number }[],
+    camera: THREE.Camera,
+    from: THREE.Vector3,
+  ): void {
+    const alive = new Set<number>();
+    for (const person of people) {
+      alive.add(person.id);
+      let tag = this.tags.get(person.id);
+      if (!tag) {
+        tag = document.createElement('div');
+        tag.className = 'player-tag';
+        this.root.appendChild(tag);
+        this.tags.set(person.id, tag);
+      }
+      const distance = from.distanceTo(person.point);
+      const projected = person.point.clone().project(camera);
+      // За спиной и совсем далеко подпись не нужна.
+      if (projected.z > 1 || distance > 220) {
+        tag.style.display = 'none';
+        continue;
+      }
+      tag.style.display = '';
+      // Далёкому подписываем расстояние: так его и ищут.
+      const label = distance > 18 ? `${person.name} · ${Math.round(distance)} м` : person.name;
+      if (tag.textContent !== label) tag.textContent = label;
+      tag.classList.toggle('hurt', person.health < 40);
+      tag.style.opacity = distance > 140 ? '0.35' : '1';
+      const x = (projected.x * 0.5 + 0.5) * window.innerWidth;
+      const y = (-projected.y * 0.5 + 0.5) * window.innerHeight;
+      tag.style.transform = `translate(-50%, -100%) translate(${x}px, ${y}px)`;
+    }
+    for (const [id, tag] of this.tags) {
+      if (alive.has(id)) continue;
+      tag.remove();
+      this.tags.delete(id);
+    }
+  }
+}
+
+/**
+ * Строка чата по Enter. Пока она открыта, управление не слушает клавиши —
+ * иначе набор «привет» превратился бы в беготню с прыжками.
+ */
+export class ChatInput {
+  private readonly field: HTMLInputElement;
+  private send: ((text: string) => void) | null = null;
+
+  constructor() {
+    this.field = document.createElement('input');
+    this.field.id = 'chat';
+    this.field.className = 'hidden';
+    this.field.maxLength = 200;
+    this.field.placeholder = 'Сказать в лес…';
+    document.body.appendChild(this.field);
+
+    this.field.addEventListener('keydown', (e) => {
+      e.stopPropagation();
+      if (e.code === 'Escape') {
+        this.close();
+        return;
+      }
+      if (e.code !== 'Enter' && e.code !== 'NumpadEnter') return;
+      const text = this.field.value.trim();
+      this.field.value = '';
+      this.close();
+      if (text) this.send?.(text);
+    });
+  }
+
+  get isOpen(): boolean {
+    return !this.field.classList.contains('hidden');
+  }
+
+  open(send: (text: string) => void): void {
+    this.send = send;
+    this.field.classList.remove('hidden');
+    this.field.focus();
+  }
+
+  close(): void {
+    this.field.classList.add('hidden');
+    this.field.blur();
+  }
+}
