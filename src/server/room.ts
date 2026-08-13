@@ -34,6 +34,9 @@ import {
  * гонять геометрию по проводу не нужно — только то, что меняется.
  */
 
+/** Дальше этого живность в снимок не попадает: её всё равно не видно. */
+const WIRE_RANGE = 220;
+
 /** Игрок глазами сервера. */
 export interface ServerPlayer {
   id: number;
@@ -284,12 +287,27 @@ export class Room {
     return damageZombie(zombie, hit.damage, hit.stagger) ? { kind: 'zombie', id: zombie.id } : null;
   }
 
-  wireAnimals(): AnimalWire[] {
-    return this.animals.map(animalToWire);
+  /**
+   * Зверьё и стая уходят каждому своё: дальше двухсот метров всё равно ничего
+   * не видно, а гонять по проводу всех семьдесят четыре зверя двенадцать раз
+   * в секунду — впустую занятый канал.
+   */
+  wireAnimals(near: ServerPlayer): AnimalWire[] {
+    const out: AnimalWire[] = [];
+    for (const a of this.animals) {
+      if (Math.hypot(a.x - near.x, a.z - near.z) > WIRE_RANGE) continue;
+      out.push(animalToWire(a));
+    }
+    return out;
   }
 
-  wireZombies(): ZombieWire[] {
-    return this.zombies.map(zombieToWire);
+  wireZombies(near: ServerPlayer): ZombieWire[] {
+    const out: ZombieWire[] = [];
+    for (const z of this.zombies) {
+      if (Math.hypot(z.x - near.x, z.z - near.z) > WIRE_RANGE) continue;
+      out.push(zombieToWire(z));
+    }
+    return out;
   }
 
   /**

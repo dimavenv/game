@@ -271,17 +271,19 @@ setInterval(() => {
 
 setInterval(() => {
   if (clients.size === 0) return;
-  const state: ServerMessage = {
-    t: 'state',
-    day: room.clock.day,
-    time: room.clock.t,
-    players: [],
-    animals: room.wireAnimals(),
-    zombies: room.wireZombies(),
-  };
-  // Каждому — все остальные, но не он сам: свою позицию он знает лучше.
+  // Каждому — своё: остальные игроки (но не он сам, свою позицию он знает
+  // лучше) и то живое, что рядом с ним.
   for (const client of clients.values()) {
-    send(client.socket, { ...state, players: room.wirePlayers(client.id) });
+    const player = room.player(client.id);
+    if (!player) continue;
+    send(client.socket, {
+      t: 'state',
+      day: room.clock.day,
+      time: room.clock.t,
+      players: room.wirePlayers(client.id),
+      animals: room.wireAnimals(player),
+      zombies: room.wireZombies(player),
+    });
   }
 }, 1000 / SNAPSHOT_HZ);
 
