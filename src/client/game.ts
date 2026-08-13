@@ -2864,7 +2864,8 @@ export class Game {
     this.nextZombieId += spawned.length;
     // Пещерные идут в начало списка: пул фигур ограничен, а ночная стая большая.
     this.zombies.unshift(...spawned);
-    this.audio.playSlot('night_start');
+    // Стон из глубины, а не «наступила ночь»: под землёй время суток не при чём.
+    this.audio.groan(14, false);
     this.toasts.push('В глубине кто-то шевелится', 'bad');
   }
 
