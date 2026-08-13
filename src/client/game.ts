@@ -2871,14 +2871,15 @@ export class Game {
 
   /** Ушёл далеко от зева — пещера пустеет, чтобы не считать её вечно. */
   private despawnFarCaveZombies(): void {
-    if (this.zombies.length === 0) return;
-    const before = this.zombies.length;
-    this.zombies = this.zombies.filter((z) => {
+    // Сначала смотрим, есть ли кого убирать: метод зовётся каждый кадр.
+    const near = (z: Zombie): boolean => {
       if (z.cave === undefined) return true;
       const mouth = this.world.caves[z.cave].mouth;
       return Math.hypot(this.player.x - mouth.x, this.player.z - mouth.z) < ZOMBIE.cave.despawn;
-    });
-    if (this.zombies.length !== before) this.zombieView.sync(this.zombies);
+    };
+    if (this.zombies.every(near)) return;
+    this.zombies = this.zombies.filter(near);
+    this.zombieView.sync(this.zombies);
   }
 
   /** Стадо: шаг поведения, голоса и удары кабана. */
